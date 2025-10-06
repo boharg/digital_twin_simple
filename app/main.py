@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from .schemas import AssetPredictIn, AssetPredictOut
+from .schemas import AssetPredictIn, AssetPredictOut, AssetFailureTypePredictIn, AssetFailureTypePredictOut
 from .db import get_async_session, async_engine, sync_engine
 from .models import Base, PredictionJob, JobStatus
 from .utils import request_sha256
@@ -21,19 +21,33 @@ async def on_startup():
 
 @app.post("/asset_predict", response_model=AssetPredictOut, status_code=status.HTTP_202_ACCEPTED)
 async def asset_predict(body: AssetPredictIn, session: AsyncSession = Depends(get_async_session)):
-    payload = body.model_dump()
-    req_hash = request_sha256(payload)
-
-    # Idempotencia: ha volt már ilyen kérés, ugyanazt adjuk vissza
+    raw_payload = body.model_dump()                 # contains datetime objects
+    req_hash = request_sha256(raw_payload)
+    payload = body.model_dump(mode="json")          # or: payload = jsonable_encoder(body)
+    # Idempotencia...
     existing = (await session.execute(
         select(PredictionJob).where(PredictionJob.request_hash == req_hash)
     )).scalar_one_or_none()
     if existing:
         return AssetPredictOut(prediction_id=str(existing.prediction_id) if existing.prediction_id else str(existing.job_id))
-
     job = PredictionJob(request_hash=req_hash, payload=payload, status=JobStatus.queued)
     session.add(job)
     await session.commit()
     await session.refresh(job)
-    # prediction_id-t a worker fogja létrehozni és kitölteni.
     return AssetPredictOut(prediction_id=str(job.job_id))
+
+@app.post("/asset_failure_type_predict", response_model=AssetFailureTypePredictOut, status_code=status.HTTP_202_ACCEPTED)
+async def asset_failure_type_predict(body: AssetFailureTypePredictIn, session: AsyncSession = Depends(get_async_session)):
+    raw_payload = body.model_dump()
+    req_hash = request_sha256(raw_payload)
+    payload = body.model_dump(mode="json")          # or: payload = jsonable_encoder(body)
+    existing = (await session.execute(
+        select(PredictionJob).where(PredictionJob.request_hash == req_hash)
+    )).scalar_one_or_none()
+    if existing:
+        return AssetFailureTypePredictOut(prediction_id=str(existing.prediction_id) if existing.prediction_id else str(existing.job_id))
+    job = PredictionJob(request_hash=req_hash, payload=payload, status=JobStatus.queued)
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+    return AssetFailureTypePredictOut(prediction_id=str(job.job_id))

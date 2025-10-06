@@ -41,20 +41,27 @@ Index("ux_prediction_jobs_request_hash", PredictionJob.request_hash, unique=True
 # ---- LÉTEZŐ táblákhoz minimális ORM mappingek (nem hozunk létre sémát) -----
 class Asset(Base):
     __tablename__ = "asset"
-    asset_id: Mapped[str] = mapped_column(String, primary_key=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     asset_name: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class FailureType(Base):
     __tablename__ = "failure_type"
-    failure_type_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    failure_type_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     failure_type_name: Mapped[str] = mapped_column(String, nullable=False)
+    is_preventive: Mapped[bool] = mapped_column()
+
+
+class Failure(Base):
+    __tablename__ = "failure"
+    failure_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
+    failure_name: Mapped[str] = mapped_column(String, nullable=False)
     is_preventive: Mapped[bool] = mapped_column()
 
 
 class AssetFailureType(Base):
     __tablename__ = "asset_failure_type"
-    asset_failure_type_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_failure_type_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     asset_id: Mapped[str] = mapped_column(ForeignKey("asset.asset_id"), nullable=False)
     failure_type_id: Mapped[int] = mapped_column(ForeignKey("failure_type.failure_type_id"), nullable=False)
     criticality: Mapped[float | None] = mapped_column(Float)
@@ -62,7 +69,7 @@ class AssetFailureType(Base):
 
 class Sensor(Base):
     __tablename__ = "sensor"
-    sensor_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sensor_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     sensor_name: Mapped[str] = mapped_column(String, nullable=False)
     asset_id: Mapped[str] = mapped_column(ForeignKey("asset.asset_id"), nullable=False)
     measurement_frequency: Mapped[float | None] = mapped_column(Float)
@@ -70,14 +77,14 @@ class Sensor(Base):
 
 class SensorFailureType(Base):
     __tablename__ = "sensor_failure_type"
-    sensor_failure_type_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sensor_failure_type_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     sensor_id: Mapped[int] = mapped_column(ForeignKey("sensor.sensor_id"), nullable=False)
     failure_type_id: Mapped[int] = mapped_column(ForeignKey("failure_type.failure_type_id"), nullable=False)
 
 
 class Gamma(Base):
     __tablename__ = "gamma"
-    gamma_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    gamma_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     gamma_value: Mapped[float] = mapped_column(Float, nullable=False)
     sensor_failure_type_id: Mapped[int] = mapped_column(ForeignKey("sensor_failure_type.sensor_failure_type_id"), nullable=False)
@@ -86,7 +93,7 @@ class Gamma(Base):
 
 class EtaBeta(Base):
     __tablename__ = "eta_beta"
-    eta_beta_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    eta_beta_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     eta_value: Mapped[float] = mapped_column(Float, nullable=False)
     beta_value: Mapped[float] = mapped_column(Float, nullable=False)
     asset_failure_type_id: Mapped[int] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=False)

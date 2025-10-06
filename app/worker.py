@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import text, select, func
 from sqlalchemy.orm import Session
 from loguru import logger
+from pydantic import ValidationError
 
 from .db import SyncSessionLocal
 from .models import (
@@ -15,6 +16,8 @@ from .predict import predict_reliability, compute_prediction_future_time
 from .utils import atomic_write_json
 from .settings import settings
 from .cmms import cmms_get_asset, cmms_post_prediction_sync
+from .schemas import AssetPredictIn, AssetFailureTypePredictIn
+
 
 POLL_INTERVAL_SEC = 1.0
 
@@ -131,21 +134,29 @@ def insert_prediction_row(session: Session, prediction_id: uuid.UUID, aft_id: in
 
 
 def process_job(session: Session, job: PredictionJob):
-    p = job.payload
-    asset_id = p["asset_id"]
-    start = p["failure_start_time"]
-    end = p["maintenance_end_time"]
-    source_time = p["source_sys_time"]
-    failure_type_id = p.get("failure_type_id")
+    try:
+        # Validate the payload
+        p = AssetPredictIn(**job.payload)
+    except ValidationError as e:
+        job.status = JobStatus.error
+        job.error_message = f"Payload validation failed: {e}"
+        session.commit()
+        return
 
-    # 1) Asset biztosítása (ha hiányzik, megpróbáljuk CMMS-ből beírni) - hasonló módon kell eljárni a többi adathiány esetén is
+    asset_id = p.asset_id
+    start = p.failure_start_time
+    end = p.maintenance_end_time
+    source_time = p.source_sys_time
+    failure_type_id = p.failure_type_id
+
+    # 1) Ensure asset exists
     if not ensure_asset(session, asset_id):
         job.status = JobStatus.not_found
         job.error_message = "Asset not found in DB/CMMS"
         session.commit()
         return
 
-    # 2) Gamma adat ellenőrzés az időablakban
+    # 2) Check for gamma data
     if not has_gamma_data(session, asset_id, failure_type_id, start, end):
         job.status = JobStatus.not_found
         job.error_message = "No gamma data in time window for asset/failure_type"
@@ -211,6 +222,95 @@ def process_job(session: Session, job: PredictionJob):
     session.commit()
 
 
+def process_asset_failure_type_job(session: Session, job: PredictionJob):
+    try:
+        # Validate the payload
+        p = AssetFailureTypePredictIn(**job.payload)
+    except ValidationError as e:
+        job.status = JobStatus.error
+        job.error_message = f"Payload validation failed: {e}"
+        session.commit()
+        return
+
+    asset_id = p.asset_id
+    start = p.failure_start_time
+    end = p.maintenance_end_time
+    source_time = p.source_sys_time
+    failure_type_id = p.failure_type_id
+
+    # 1) Ensure asset exists
+    if not ensure_asset(session, asset_id):
+        job.status = JobStatus.not_found
+        job.error_message = "Asset not found in DB/CMMS"
+        session.commit()
+        return
+
+    # 2) Check for gamma data
+    if not has_gamma_data(session, asset_id, failure_type_id, start, end):
+        job.status = JobStatus.not_found
+        job.error_message = "No gamma data in time window for asset/failure_type"
+        session.commit()
+        return
+
+    # 3) Resolve asset_failure_type_id
+    aft_id = resolve_asset_failure_type_id(session, asset_id, failure_type_id)
+    if aft_id is None:
+        job.status = JobStatus.not_found
+        job.error_message = "asset_failure_type mapping not found"
+        session.commit()
+        return
+
+    # 4) Retrieve Eta/Beta values (latest values up to the window end)
+    eta_val, beta_val = get_latest_eta_beta(session, aft_id, end)
+
+    # 5) Compute prediction horizon (e.g., +7 days)
+    prediction_future_time = compute_prediction_future_time(end, days_ahead=7)
+
+    # 6) Perform prediction
+    value = predict_reliability(
+        prediction_future_time=prediction_future_time,
+        failure_start_time=start,
+        maintenance_end_time=end,
+        source_sys_time=source_time,
+        eta_value=eta_val,
+        beta_value=beta_val,
+        default_reliability=p.default_reliability,
+    )
+
+    # 7) Generate prediction_id, save JSON, insert into prediction table, and post to CMMS
+    pred_id = uuid.uuid4()
+    out = {"prediction_id": str(pred_id), "predicted_reliability": float(value)}
+
+    # Save JSON
+    json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
+    atomic_write_json(json_path, out)
+
+    # Insert into prediction table
+    insert_prediction_row(
+        session=session,
+        prediction_id=pred_id,
+        aft_id=aft_id,
+        predicted_reliability=float(value),
+        pred_time=source_time,
+        pred_future_time=prediction_future_time
+    )
+
+    # Post to CMMS
+    try:
+        cmms_post_prediction_sync(out)
+    except Exception as e:
+        job.status = JobStatus.error
+        job.error_message = f"CMMS POST failed: {e}"
+        job.prediction_id = pred_id
+        session.commit()
+        return
+
+    # 8) Mark job as done
+    job.status = JobStatus.done
+    job.prediction_id = pred_id
+    session.commit()
+
+
 def main():
     logger.info("DB-queue worker started (no Redis).")
     while True:
@@ -221,7 +321,10 @@ def main():
                     time.sleep(POLL_INTERVAL_SEC)
                     continue
                 logger.info(f"Processing job_id={job.job_id}")
-                process_job(session, job)
+                if job.job_type == "asset_predict":
+                    process_job(session, job)
+                elif job.job_type == "asset_failure_type_predict":
+                    process_asset_failure_type_job(session, job)
         except Exception as e:
             logger.exception(f"Worker loop error: {e}")
             time.sleep(POLL_INTERVAL_SEC)
