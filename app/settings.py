@@ -3,6 +3,7 @@ import os
 
 print("DEBUG DATABASE_URL:", os.getenv("DATABASE_URL"))
 
+
 class Settings(BaseSettings):
     DATABASE_URL: str  # sync psycopg (worker)
     ASYNC_DATABASE_URL: str  # asyncpg (api)

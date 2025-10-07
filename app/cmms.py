@@ -28,6 +28,47 @@ async def cmms_get_failure_type(asset_id: str) -> dict | None:
         return r.json()
 
 
+async def cmms_get_maintenance_list(maintenance_list_id: str) -> dict | None:
+    url = f"{settings.CMMS_BASE_URL}/maintenance_list"
+    params = {"maintenance_list_id": maintenance_list_id}
+    async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
+        r = await client.get(url, params=params)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
+
+
+async def cmms_get_operations_for_maintenance_list(maintenance_list_id: str) -> list[dict]:
+    url = f"{settings.CMMS_BASE_URL}/maintenance_list_operations"
+    params = {"maintenance_list_id": maintenance_list_id}
+    async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
+        r = await client.get(url, params=params)
+        r.raise_for_status()
+        return r.json()
+
+
+async def cmms_get_asset_maintenance_lists(asset_id: str) -> list[dict]:
+    # expects each item: { "asset_maintenance_list_id": "...", "maintenance_list_id": "..." }
+    url = f"{settings.CMMS_BASE_URL}/asset_maintenance_lists"
+    params = {"asset_id": asset_id}
+    async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
+        r = await client.get(url, params=params)
+        r.raise_for_status()
+        return r.json()
+
+
+async def cmms_get_asset_failure_type_asset_maintenance_lists(asset_failure_type_id: str) -> list[dict]:
+    # expects: { "asset_failure_type_asset_maintenance_list_id": "...",
+    #            "asset_maintenance_list_id": "...", "default_reliability": 0.95 }
+    url = f"{settings.CMMS_BASE_URL}/asset_failure_type_asset_maintenance_lists"
+    params = {"asset_failure_type_id": asset_failure_type_id}
+    async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
+        r = await client.get(url, params=params)
+        r.raise_for_status()
+        return r.json()
+
+
 def cmms_post_asset_prediction_sync(payload: dict):
     import httpx
     url = f"{settings.CMMS_BASE_URL}/asset_prediction"
@@ -53,5 +94,3 @@ def cmms_post_workrequest(payload: dict):
         r = client.post(url, json=payload)
         r.raise_for_status()
         return r.json() if "application/json" in r.headers.get("content-type", "") else {"status": r.status_code}
-
-

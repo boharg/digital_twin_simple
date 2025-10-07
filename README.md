@@ -17,10 +17,15 @@ Predikció: ha van eta_beta, Weibull; ha nincs, default_reliability átlag vagy 
 Eredmény perzisztencia: prediction tábla insert + JSON fájl + CMMS POST.
 
 # Python környezet:
+
 python -m venv .venv
+
 ## Windows 
-.venv\Scripts\activate
+
+.venv\Scripts\activate.bat
+
 ## Ubuntu
+
 source .venv/bin/activate
 
 ## Csomagok telepítése

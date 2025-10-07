@@ -41,4 +41,3 @@ class Failures(BaseModel):
     source_sys_time: datetime
     failure_start_time: datetime
     maintenance_end_time: datetime
-

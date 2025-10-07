@@ -1,5 +1,6 @@
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, JSON, Enum, Index, Float, Text, Integer, ForeignKey, DateTime, BigInteger
+from sqlalchemy import (String, JSON, Enum, Index, Float, Text, 
+                        Integer, ForeignKey, DateTime, BigInteger, Boolean)
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 import enum
@@ -63,7 +64,7 @@ class AssetFailureType(Base):
     __tablename__ = "asset_failure_type"
     asset_failure_type_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     asset_id: Mapped[str] = mapped_column(ForeignKey("asset.asset_id"), nullable=False)
-    failure_type_id: Mapped[int] = mapped_column(ForeignKey("failure_type.failure_type_id"), nullable=False)
+    failure_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("failure_type.failure_type_id"), nullable=False)
     criticality: Mapped[float | None] = mapped_column(Float)
 
 
@@ -71,7 +72,7 @@ class Sensor(Base):
     __tablename__ = "sensor"
     sensor_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     sensor_name: Mapped[str] = mapped_column(String, nullable=False)
-    asset_id: Mapped[str] = mapped_column(ForeignKey("asset.asset_id"), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset.asset_id"), nullable=False)
     measurement_frequency: Mapped[float | None] = mapped_column(Float)
 
 
@@ -79,7 +80,7 @@ class SensorFailureType(Base):
     __tablename__ = "sensor_failure_type"
     sensor_failure_type_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     sensor_id: Mapped[int] = mapped_column(ForeignKey("sensor.sensor_id"), nullable=False)
-    failure_type_id: Mapped[int] = mapped_column(ForeignKey("failure_type.failure_type_id"), nullable=False)
+    failure_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("failure_type.failure_type_id"), nullable=False)
 
 
 class Gamma(Base):
@@ -87,7 +88,7 @@ class Gamma(Base):
     gamma_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     gamma_value: Mapped[float] = mapped_column(Float, nullable=False)
-    sensor_failure_type_id: Mapped[int] = mapped_column(ForeignKey("sensor_failure_type.sensor_failure_type_id"), nullable=False)
+    sensor_failure_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sensor_failure_type.sensor_failure_type_id"), nullable=False)
     contribution: Mapped[float | None] = mapped_column(Float)
 
 
@@ -107,3 +108,37 @@ class Prediction(Base):
     predicted_reliability: Mapped[float] = mapped_column(Float, nullable=False)
     time: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # mikor készült a predikció (pl. source_sys_time)
     prediction_future_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # amire jósolunk
+
+
+class MaintenanceList(Base):
+    __tablename__ = "maintenance_list"
+    maintenance_list_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    maintenance_list_name: Mapped[str] = mapped_column(String, nullable=False)
+    is_preventive: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class OperationsMaintenanceList(Base):
+    __tablename__ = "operations_maintenance_list"
+    maintenance_list_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("maintenance_list.maintenance_list_id"),
+        primary_key=True
+    )
+    operation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True
+    )
+
+
+class AssetMaintenanceList(Base):
+    __tablename__ = "asset_maintenance_list"
+    asset_maintenance_list_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset.asset_id"), nullable=False)
+    maintenance_list_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("maintenance_list.maintenance_list_id"), nullable=False)
+
+
+class AssetFailureTypeAssetMaintenanceList(Base):
+    __tablename__ = "asset_failure_type_asset_maintenance_list"
+    asset_failure_type_asset_maintenance_list_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    asset_failure_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=False)
+    asset_maintenance_list_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset_maintenance_list.asset_maintenance_list_id"), nullable=False)
+    default_reliability: Mapped[float | None] = mapped_column(Float)

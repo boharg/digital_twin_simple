@@ -36,6 +36,7 @@ async def asset_predict(body: AssetPredictIn, session: AsyncSession = Depends(ge
     await session.refresh(job)
     return AssetPredictOut(prediction_id=str(job.job_id))
 
+
 @app.post("/asset_failure_type_predict", response_model=AssetFailureTypePredictOut, status_code=status.HTTP_202_ACCEPTED)
 async def asset_failure_type_predict(body: AssetFailureTypePredictIn, session: AsyncSession = Depends(get_async_session)):
     raw_payload = body.model_dump()
