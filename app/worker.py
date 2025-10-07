@@ -81,6 +81,12 @@ def resolve_asset_failure_type_id(session: Session, asset_id: str, failure_type_
         ).limit(1)
     ).scalar_one_or_none()
     return aft
+    # Ha nincs, létrehozzuk (feltéve, hogy létezik asset és failure_type)
+    mapping = AssetFailureType(asset_id=asset_id, failure_type_id=failure_type_id)
+    session.add(mapping)
+    session.commit()
+    session.refresh(mapping)
+    return mapping.asset_failure_type_id
 
 
 def has_gamma_data(session: Session, asset_id: str, failure_type_id: int | None,
