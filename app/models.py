@@ -30,6 +30,7 @@ class PredictionJob(Base):
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.queued, nullable=False)
+    endpoint_type: Mapped[str] = mapped_column(String, nullable=True)  # pl. "asset_predict" vagy "asset_failure_type_predict"
     prediction_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -63,7 +64,7 @@ class Failure(Base):
 class AssetFailureType(Base):
     __tablename__ = "asset_failure_type"
     asset_failure_type_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
-    asset_id: Mapped[str] = mapped_column(ForeignKey("asset.asset_id"), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset.asset_id"), nullable=False)
     failure_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("failure_type.failure_type_id"), nullable=False)
     criticality: Mapped[float | None] = mapped_column(Float)
 
@@ -97,14 +98,14 @@ class EtaBeta(Base):
     eta_beta_id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True)
     eta_value: Mapped[float] = mapped_column(Float, nullable=False)
     beta_value: Mapped[float] = mapped_column(Float, nullable=False)
-    asset_failure_type_id: Mapped[int] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=False)
+    asset_failure_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=False)
     time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class Prediction(Base):
     __tablename__ = "prediction"
     prediction_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    asset_failure_type_id: Mapped[int] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=False)
+    asset_failure_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=False)
     predicted_reliability: Mapped[float] = mapped_column(Float, nullable=False)
     time: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # mikor készült a predikció (pl. source_sys_time)
     prediction_future_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # amire jósolunk
