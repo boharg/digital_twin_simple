@@ -23,7 +23,8 @@ from .cmms import (cmms_get_asset,
                    cmms_post_asset_prediction_sync,
                    cmms_get_operation_maintenance_lists,
                    cmms_get_asset_maintenance_lists,
-                   cmms_get_asset_failure_type_asset_maintenance_lists)
+                   cmms_get_asset_failure_type_asset_maintenance_lists,
+                   cmms_post_asset_failure_type_prediction_sync)
 from .schemas import AssetPredictIn, AssetFailureTypePredictIn
 
 
@@ -412,44 +413,84 @@ def process_job(session: Session, job: PredictionJob):
 
 # ! endpoint_type alakalmazásával kellene szűrni a jobokat
 
-    # 6) Predikció
-    value = predict_reliability(
-        prediction_future_time=prediction_future_time,
-        failure_start_time=start,
-        maintenance_end_time=end,
-        source_sys_time=source_time,
-        eta_value=eta_val,
-        beta_value=beta_val,
-        default_reliability=p.get("default_reliability"),
-    )
+    if job.endpoint_type == "asset_predict":  
+        # 6) Predikció
+        value = predict_reliability(
+            prediction_future_time=prediction_future_time,
+            failure_start_time=start,
+            maintenance_end_time=end,
+            source_sys_time=source_time,
+            eta_value=eta_val,
+            beta_value=beta_val,
+            default_reliability=p.get("default_reliability"),
+        )
 
-    # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
-    pred_id = uuid.uuid4()
-    out = {"prediction_id": str(pred_id), "predicted_reliability": float(value)}
+        # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
+        pred_id = uuid.uuid4()
+        out = {"prediction_id": str(pred_id), "predicted_reliability": float(value)}
 
-    # JSON
-    json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
-    atomic_write_json(json_path, out)
+        # JSON
+        json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
+        atomic_write_json(json_path, out)
 
-    # prediction tábla
-    insert_prediction_row(
-        session=session,
-        prediction_id=pred_id,
-        aft_id=aft_id,
-        predicted_reliability=float(value),
-        pred_time=source_time,
-        pred_future_time=prediction_future_time
-    )
+        # prediction tábla
+        insert_prediction_row(
+            session=session,
+            prediction_id=pred_id,
+            aft_id=aft_id,
+            predicted_reliability=float(value),
+            pred_time=source_time,
+            pred_future_time=prediction_future_time
+        )
 
-    # CMMS POST (ha elbukik, itt nem retry-olunk automatikusan – log + status=error)
-    try:
-        cmms_post_asset_prediction_sync(out)
-    except Exception as e:
-        job.status = JobStatus.error
-        job.error_message = f"CMMS POST failed: {e}"
-        job.prediction_id = pred_id
-        session.commit()
-        return
+        # CMMS POST (ha elbukik, itt nem retry-olunk automatikusan – log + status=error)
+        try:
+            cmms_post_asset_prediction_sync(out)
+        except Exception as e:
+            job.status = JobStatus.error
+            job.error_message = f"CMMS POST failed: {e}"
+            job.prediction_id = pred_id
+            session.commit()
+            return
+    elif job.endpoint_type == "asset_failure_type_predict":
+                # 6) Predikció
+        value = predict_reliability(
+            prediction_future_time=prediction_future_time,
+            failure_start_time=start,
+            maintenance_end_time=end,
+            source_sys_time=source_time,
+            eta_value=eta_val,
+            beta_value=beta_val,
+            default_reliability=p.get("default_reliability"),
+        )
+
+        # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
+        pred_id = uuid.uuid4()
+        out = {"prediction_id": str(pred_id), "predicted_reliability": float(value)}
+
+        # JSON
+        json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
+        atomic_write_json(json_path, out)
+
+        # prediction tábla
+        insert_prediction_row(
+            session=session,
+            prediction_id=pred_id,
+            aft_id=aft_id,
+            predicted_reliability=float(value),
+            pred_time=source_time,
+            pred_future_time=prediction_future_time
+        )
+
+        # CMMS POST (ha elbukik, itt nem retry-olunk automatikusan – log + status=error)
+        try:
+            cmms_post_asset_failure_type_prediction_sync(out)
+        except Exception as e:
+            job.status = JobStatus.error
+            job.error_message = f"CMMS POST failed: {e}"
+            job.prediction_id = pred_id
+            session.commit()
+            return
 
     # 8) kész
     job.status = JobStatus.done
