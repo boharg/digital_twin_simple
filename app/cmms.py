@@ -120,7 +120,7 @@ def cmms_post_asset_prediction_sync(payload: dict):
 
 
 def cmms_post_asset_failure_type_prediction_sync(payload: dict):
-    url = f"{settings.CMMS_BASE_URL}/asset_failure_type_predict"
+    url = f"{settings.CMMS_BASE_URL}/asset_failure_type_prediction"
     try:
         with httpx.Client(timeout=10.0, headers=_headers()) as client:
             r = client.post(url, json=payload)

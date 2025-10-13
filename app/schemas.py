@@ -17,11 +17,11 @@ class AssetPredictIn(BaseModel):
 
 class AssetPredictOut(BaseModel):
     prediction_id: UUID
-    # predicted_value: float # ! jelenleg csak a prediction_id kerül kiküldésre, a value nem
+    predicted_value: float
 
 
 class AssetFailureTypePredictIn(BaseModel):
-    operation_ids: List[UUID]  # a maintenance műveletekhez
+    operation_id: List[UUID]  # a maintenance műveletekhez
     failure_start_time: datetime
     maintenance_end_time: datetime
     source_sys_time: datetime

@@ -63,6 +63,24 @@ def claim_one_job(session: Session) -> PredictionJob | None:
     return job
 
 
+def insert_prediction_row(session: Session, prediction_id: str | uuid.UUID, aft_id: str | uuid.UUID,
+                          predicted_reliability: float,
+                          pred_time: datetime, pred_future_time: datetime):
+    # Normalize IDs (avoid uuid.UUID(UUID(...)) -> AttributeError)
+    pred_uuid = prediction_id if isinstance(prediction_id, uuid.UUID) else uuid.UUID(str(prediction_id))
+    aft_uuid = aft_id if isinstance(aft_id, uuid.UUID) else uuid.UUID(str(aft_id))
+    pr = max(0.0, min(1.0, float(predicted_reliability)))
+
+    session.add(Prediction(
+        prediction_id=pred_uuid,
+        asset_failure_type_id=aft_uuid,
+        predicted_reliability=pr,
+        time=pred_time,
+        prediction_future_time=pred_future_time,
+    ))
+    session.flush()
+
+
 def ensure_asset(session: Session, asset_id: str) -> bool:
     asset = session.get(Asset, asset_id)
     if asset:
@@ -215,21 +233,22 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: str) -> list[str]
     a_uuid = uuid.UUID(asset_id)
 
     # 1) Local mappings
-    aml_ids = session.execute(
+    db_ml_ids = session.execute(
         select(AssetMaintenanceList.maintenance_list_id)
         .where(AssetMaintenanceList.asset_id == a_uuid)
     ).scalars().all()
-    if aml_ids:
-        return bool(aml_ids)
+    if db_ml_ids:
+        return [str(x) for x in db_ml_ids]
 
     # 2) Fallback to CMMS
+    rows: list[dict] = []
     try:
         rows = asyncio.run(cmms_get_asset_maintenance_lists(asset_id)) or []
     except Exception:
         rows = []
 
     if not rows:
-        return False
+        return []
 
     for r in rows:
         ml_id = r.get("maintenance_list_id")
@@ -237,16 +256,43 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: str) -> list[str]
             continue
         ml_uuid = uuid.UUID(ml_id)
 
+        # Ensure maintenance_list row exists (pulls name if needed)
+        ensure_maintenance_list_row(session, ml_id)
+
         # Ensure asset -> maintenance_list mapping
-        aml = session.execute(
+        exists_aml = session.execute(
             select(AssetMaintenanceList.asset_maintenance_list_id).where(
                 AssetMaintenanceList.asset_id == a_uuid,
                 AssetMaintenanceList.maintenance_list_id == ml_uuid
             ).limit(1)
         ).first()
+        if not exists_aml:
+            session.add(AssetMaintenanceList(asset_id=a_uuid, maintenance_list_id=ml_uuid))
+
+        # Optionally ensure operation -> maintenance_list mapping if provided by CMMS
+        op_id = r.get("operation_id")
+        if op_id:
+            op_uuid = uuid.UUID(op_id)
+            exists_oml = session.execute(
+                select(OperationsMaintenanceList.maintenance_list_id).where(
+                    OperationsMaintenanceList.maintenance_list_id == ml_uuid,
+                    OperationsMaintenanceList.operation_id == op_uuid
+                ).limit(1)
+            ).first()
+            if not exists_oml:
+                session.add(OperationsMaintenanceList(
+                    maintenance_list_id=ml_uuid,
+                    operation_id=op_uuid
+                ))
 
     session.flush()
-    return bool(aml)
+
+    # Re-read and return
+    db_ml_ids = session.execute(
+        select(AssetMaintenanceList.maintenance_list_id)
+        .where(AssetMaintenanceList.asset_id == a_uuid)
+    ).scalars().all()
+    return [str(x) for x in db_ml_ids]
 
 
 def get_latest_eta_beta(session: Session, asset_failure_type_id: str, asof: datetime):
@@ -263,19 +309,6 @@ def get_latest_eta_beta(session: Session, asset_failure_type_id: str, asof: date
     return (row[0], row[1]) if row else (None, None)
 
 
-def insert_prediction_row(session: Session, prediction_id: str, aft_id: str,
-                          predicted_reliability: float,
-                          pred_time: datetime, pred_future_time: datetime):
-    session.add(Prediction(
-        prediction_id=uuid.UUID(prediction_id),
-        asset_failure_type_id=uuid.UUID(aft_id),
-        predicted_reliability=predicted_reliability,
-        time=pred_time,
-        prediction_future_time=pred_future_time
-    ))
-    session.commit()
-
-
 def ensure_asset_failure_type_id(session: Session, asset_id: str,
                                  failure_type_id: str | None) -> str | None:
     """
@@ -289,7 +322,7 @@ def ensure_asset_failure_type_id(session: Session, asset_id: str,
             AssetFailureType.failure_type_id == uuid.UUID(failure_type_id)
         ).limit(1)
     ).scalar_one_or_none()
-    return aft
+    return str(aft) if aft else None
 
 
 def ensure_asset_maintenance_lists_asset_failure_type(
@@ -297,50 +330,54 @@ def ensure_asset_maintenance_lists_asset_failure_type(
     asset_id: str,
     failure_type_id: str,
 ) -> list[str]:
-
+    """
+    Ensure AFT ↔ AML mappings for the given asset and failure type.
+    - Ensures AMLs for asset (DB or CMMS)
+    - Ensures AssetFailureType exists
+    - Creates missing AssetFailureTypeAssetMaintenanceList mappings
+    Returns maintenance_list_ids mapped for this AFT.
+    """
     a_uuid = uuid.UUID(asset_id)
-    ml_ids = session.execute(
-        select(AssetMaintenanceList.maintenance_list_id)
-        .where(AssetMaintenanceList.asset_id == a_uuid)
-    ).scalars().all()
 
-    aft_id = session.execute(
-        select(AssetFailureType.asset_failure_type_id).where(
-            AssetFailureType.asset_id == a_uuid,
-            AssetFailureType.failure_type_id == uuid.UUID(failure_type_id)
-        ).limit(1)
-    )
+    # Ensure AMLs exist for the asset
+    ml_ids = ensure_asset_maintenance_lists(session, asset_id)
+    if not ml_ids:
+        return []
 
-    aml = set(
-        session.execute(
-            select(AssetFailureTypeAssetMaintenanceList.asset_maintenance_list_id)
-            .where(AssetFailureTypeAssetMaintenanceList.asset_failure_type_id == aft_id,
-                   AssetFailureTypeAssetMaintenanceList.asset_maintenance_list_id == ml_ids)
-        ).scalars().all()
-    )
+    # Resolve AFT id (scalar UUID string)
+    aft_id = ensure_asset_failure_type_id(session, asset_id, failure_type_id)
+    if not aft_id:
+        return []
+    aft_uuid = uuid.UUID(aft_id)
 
-    if not aml:
-        # Fallback to CMMS
-        try:
-            rows = asyncio.run(cmms_get_asset_failure_type_asset_maintenance_lists(
-                asset_id, failure_type_id, default_reliability=0.0)) or []
-        except Exception:
-            rows = []
+    # Get all AML rows for this asset (need AML ids and their ML ids)
+    aml_rows = session.execute(
+        select(
+            AssetMaintenanceList.asset_maintenance_list_id,
+            AssetMaintenanceList.maintenance_list_id,
+        ).where(AssetMaintenanceList.asset_id == a_uuid)
+    ).all()
 
-        for r in rows:
-            aml_id = r.get("asset_maintenance_list_id")
-            if not aml_id:
-                continue
-            aml_uuid = uuid.UUID(aml_id)
+    # Existing mappings for this AFT
+    existing_aml_ids: set[uuid.UUID] = set(session.execute(
+        select(AssetFailureTypeAssetMaintenanceList.asset_maintenance_list_id)
+        .where(AssetFailureTypeAssetMaintenanceList.asset_failure_type_id == aft_uuid)
+    ).scalars().all())
 
-            # Ensure asset_failure_type -> asset_maintenance_list mapping
-            session.merge(AssetFailureTypeAssetMaintenanceList(
-                asset_failure_type_id=aft_id,
-                asset_maintenance_list_id=aml_uuid
-            ))
+    # Create missing mappings
+    for aml_id, _ml_id in aml_rows:
+        if aml_id in existing_aml_ids:
+            continue
+        session.add(AssetFailureTypeAssetMaintenanceList(
+            asset_failure_type_id=aft_uuid,
+            asset_maintenance_list_id=aml_id,
+            default_reliability=1
+        ))
 
     session.flush()
-    return bool(aml)
+
+    # Return the maintenance_list_ids mapped for this AFT (from the asset’s AMLs)
+    return [str(ml_id) for (_aml_id, ml_id) in aml_rows]
 
 
 def process_job(session: Session, job: PredictionJob):
@@ -358,7 +395,8 @@ def process_job(session: Session, job: PredictionJob):
     end = p.maintenance_end_time
     source_time = p.source_sys_time
     failure_type_id = str(p.failure_type_id)
-    operation_id = str(p.operation_id)
+    op_raw = p.operation_id
+    operation_ids: list[str] = [str(x) for x in (op_raw if isinstance(op_raw, (list, tuple)) else [op_raw])]
 
     # 1) Ensure data exists
     if not ensure_asset(session, asset_id):
@@ -374,17 +412,21 @@ def process_job(session: Session, job: PredictionJob):
         return
 
     # 2) Check for data
-    if not has_gamma_data(session, asset_id, failure_type_id, start, end):
+    # if not has_gamma_data(session, asset_id, failure_type_id, start, end):
+    #    job.status = JobStatus.not_found
+    #    job.error_message = "No gamma data in time window for asset/failure_type"
+    #    session.commit()
+    #    return
+
+    any_oml = False
+    for op_id in operation_ids:
+        if has_maintenanace_list(session, op_id) or ensure_operation_maintenanace_lists(session, op_id):
+            any_oml = True
+    if not any_oml:
         job.status = JobStatus.not_found
-        job.error_message = "No gamma data in time window for asset/failure_type"
+        job.error_message = "No maintenance_list data for any operation_id"
         session.commit()
         return
-
-    if not has_maintenanace_list(session, operation_id):
-        if not ensure_operation_maintenanace_lists(session, operation_id):
-            job.status = JobStatus.not_found
-            job.error_message = "No maintenanace_list data for operation_id"
-            session.commit()
 
     # 3) asset_failure_type_id feloldás
     aft_id = ensure_asset_failure_type_id(session, asset_id, failure_type_id)
@@ -409,7 +451,7 @@ def process_job(session: Session, job: PredictionJob):
         return
 
     # 4) Eta/Beta felkutatása (legutóbbi érték a window végéig)
-    eta_val, beta_val = get_latest_eta_beta(session, aft_id, end)
+    # eta_val, beta_val = get_latest_eta_beta(session, aft_id, end)
 
     # 5) Predikciós horizont (pl. +7 nap)
     prediction_future_time = compute_prediction_future_time(end, days_ahead=7)
@@ -421,11 +463,11 @@ def process_job(session: Session, job: PredictionJob):
             failure_start_time=start,
             maintenance_end_time=end,
             source_sys_time=source_time,
-            eta_value=eta_val,
-            beta_value=beta_val,
-            default_reliability=p.get("default_reliability"),
+            # eta_value=eta_val,
+            # beta_value=beta_val,
+            # default_reliability=p.get("default_reliability"),
         )
-
+        print(value)
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
         pred_id = uuid.uuid4()
         out = {"prediction_id": str(pred_id), "predicted_reliability": float(value)}
@@ -446,7 +488,10 @@ def process_job(session: Session, job: PredictionJob):
 
         # CMMS POST (ha elbukik, itt nem retry-olunk automatikusan – log + status=error)
         try:
-            cmms_post_asset_prediction_sync(out)
+            resp = cmms_post_asset_prediction_sync(out)
+            logger.info("CMMS asset_prediction response: {}", resp)  # pass resp as arg
+            if isinstance(resp, dict) and resp.get("error"):
+                raise RuntimeError(resp["error"])
         except Exception as e:
             job.status = JobStatus.error
             job.error_message = f"CMMS POST failed: {e}"
@@ -460,9 +505,9 @@ def process_job(session: Session, job: PredictionJob):
             failure_start_time=start,
             maintenance_end_time=end,
             source_sys_time=source_time,
-            eta_value=eta_val,
-            beta_value=beta_val,
-            default_reliability=p.get("default_reliability"),
+            # eta_value=eta_val,
+            # beta_value=beta_val,
+            # default_reliability=p.get("default_reliability"),
         )
 
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
@@ -485,7 +530,10 @@ def process_job(session: Session, job: PredictionJob):
 
         # CMMS POST (ha elbukik, itt nem retry-olunk automatikusan – log + status=error)
         try:
-            cmms_post_asset_failure_type_prediction_sync(out)
+            resp = cmms_post_asset_failure_type_prediction_sync(out)
+            logger.info(f"CMMS asset_prediction response: {resp}")  # was: "{resp}"
+            if isinstance(resp, dict) and resp.get("error"):
+                raise RuntimeError(resp["error"])
         except Exception as e:
             job.status = JobStatus.error
             job.error_message = f"CMMS POST failed: {e}"

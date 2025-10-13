@@ -15,8 +15,8 @@ def predict_reliability(
     failure_start_time: datetime,
     maintenance_end_time: datetime,
     source_sys_time: datetime,
-    eta_value: Optional[float],
-    beta_value: Optional[float],
+    eta_value: Optional[float] = None,
+    beta_value: Optional[float] = None,
     default_reliability: Optional[Sequence[float]] = None,
 ) -> float:
     """

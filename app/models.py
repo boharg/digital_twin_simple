@@ -139,7 +139,9 @@ class AssetMaintenanceList(Base):
 
 class AssetFailureTypeAssetMaintenanceList(Base):
     __tablename__ = "asset_failure_type_asset_maintenance_list"
-    asset_failure_type_asset_maintenance_list_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    asset_failure_type_asset_maintenance_list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
     asset_failure_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=False)
     asset_maintenance_list_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("asset_maintenance_list.asset_maintenance_list_id"), nullable=False)
-    default_reliability: Mapped[float | None] = mapped_column(Float)
+    default_reliability: Mapped[float] = mapped_column(Float, nullable=False)
