@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
@@ -17,6 +17,7 @@ class AssetPredictIn(BaseModel):
 
 class AssetPredictOut(BaseModel):
     prediction_id: UUID
+    # predicted_value: float # ! jelenleg csak a prediction_id kerül kiküldésre, a value nem
 
 
 class AssetFailureTypePredictIn(BaseModel):

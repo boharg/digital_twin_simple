@@ -1,6 +1,6 @@
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import (String, JSON, Enum, Index, Float, Text, 
-                        Integer, ForeignKey, DateTime, BigInteger, Boolean)
+from sqlalchemy import (String, JSON, Enum, Index, Float, Text,
+                        ForeignKey, DateTime, Boolean)
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 import enum
@@ -30,7 +30,7 @@ class PredictionJob(Base):
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.queued, nullable=False)
-    endpoint_type: Mapped[str] = mapped_column(String, nullable=True)  # pl. "asset_predict" vagy "asset_failure_type_predict" # ! db frissítése szükséges
+    endpoint_type: Mapped[str] = mapped_column(String, nullable=False)  # pl. "asset_predict" vagy "asset_failure_type_predict" # ! db frissítése szükséges
     prediction_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

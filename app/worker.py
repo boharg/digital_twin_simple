@@ -1,7 +1,7 @@
 import time, uuid, os, asyncio
 from contextlib import contextmanager
 from datetime import datetime
-from sqlalchemy import text, select, func
+from sqlalchemy import text, select
 from sqlalchemy.orm import Session
 from loguru import logger
 from pydantic import ValidationError
@@ -9,8 +9,7 @@ from pydantic import ValidationError
 from .db import SyncSessionLocal
 from .models import (
     PredictionJob, JobStatus,
-    Asset, FailureType, AssetFailureType,
-    Sensor, SensorFailureType, Gamma, EtaBeta,
+    Asset, FailureType, AssetFailureType, EtaBeta,
     Prediction, MaintenanceList, OperationsMaintenanceList,
     AssetMaintenanceList, AssetFailureTypeAssetMaintenanceList
 )
@@ -25,7 +24,7 @@ from .cmms import (cmms_get_asset,
                    cmms_get_asset_maintenance_lists,
                    cmms_get_asset_failure_type_asset_maintenance_lists,
                    cmms_post_asset_failure_type_prediction_sync)
-from .schemas import AssetPredictIn, AssetFailureTypePredictIn
+from .schemas import AssetPredictIn
 
 
 POLL_INTERVAL_SEC = 1.0
@@ -62,13 +61,6 @@ def claim_one_job(session: Session) -> PredictionJob | None:
     session.commit()
     session.refresh(job)
     return job
-
-
-def debug_jobs(session: Session):
-    rows = session.execute(
-        select(PredictionJob.job_id, PredictionJob.status)
-    ).all()
-    print("Jobs in DB:", rows)
 
 
 def ensure_asset(session: Session, asset_id: str) -> bool:
@@ -319,25 +311,36 @@ def ensure_asset_maintenance_lists_asset_failure_type(
         ).limit(1)
     )
 
-    existing_aml_ids = set(
+    aml = set(
         session.execute(
             select(AssetFailureTypeAssetMaintenanceList.asset_maintenance_list_id)
-            .where(AssetFailureTypeAssetMaintenanceList.asset_failure_type_id == aft_id)
+            .where(AssetFailureTypeAssetMaintenanceList.asset_failure_type_id == aft_id,
+                   AssetFailureTypeAssetMaintenanceList.asset_maintenance_list_id == ml_ids)
         ).scalars().all()
     )
 
-    aml_rows = session.execute(
-        select(
-            AssetMaintenanceList.asset_maintenance_list_id,
-            AssetMaintenanceList.maintenance_list_id,
-        ).where(
-            AssetMaintenanceList.asset_id == a_uuid,
-            AssetMaintenanceList.maintenance_list_id.in_(ml_ids),
-        )
-    ).all()
+    if not aml:
+        # Fallback to CMMS
+        try:
+            rows = asyncio.run(cmms_get_asset_failure_type_asset_maintenance_lists(
+                asset_id, failure_type_id, default_reliability=0.0)) or []
+        except Exception:
+            rows = []
+
+        for r in rows:
+            aml_id = r.get("asset_maintenance_list_id")
+            if not aml_id:
+                continue
+            aml_uuid = uuid.UUID(aml_id)
+
+            # Ensure asset_failure_type -> asset_maintenance_list mapping
+            session.merge(AssetFailureTypeAssetMaintenanceList(
+                asset_failure_type_id=aft_id,
+                asset_maintenance_list_id=aml_uuid
+            ))
 
     session.flush()
-    return bool(aml_rows)
+    return bool(aml)
 
 
 def process_job(session: Session, job: PredictionJob):
@@ -411,9 +414,7 @@ def process_job(session: Session, job: PredictionJob):
     # 5) Predikciós horizont (pl. +7 nap)
     prediction_future_time = compute_prediction_future_time(end, days_ahead=7)
 
-# ! endpoint_type alakalmazásával kellene szűrni a jobokat
-
-    if job.endpoint_type == "asset_predict":  
+    if job.endpoint_type == "asset_predict":
         # 6) Predikció
         value = predict_reliability(
             prediction_future_time=prediction_future_time,
@@ -453,7 +454,7 @@ def process_job(session: Session, job: PredictionJob):
             session.commit()
             return
     elif job.endpoint_type == "asset_failure_type_predict":
-                # 6) Predikció
+        # 6) Predikció
         value = predict_reliability(
             prediction_future_time=prediction_future_time,
             failure_start_time=start,
@@ -503,13 +504,10 @@ def main():
     while True:
         try:
             with session_scope() as session:
-                debug_jobs(session)
                 job = claim_one_job(session)
-                print(job)
                 if not job:
                     time.sleep(POLL_INTERVAL_SEC)
                     continue
-                logger.info(f"Processing job_id={job.job_id}")
                 process_job(session, job)
         except Exception as e:
             logger.exception(f"Worker loop error: {e}")

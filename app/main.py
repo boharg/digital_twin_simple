@@ -2,9 +2,9 @@ from fastapi import FastAPI, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from .schemas import (AssetPredictIn, AssetPredictOut,
-                      AssetFailureTypePredictIn, AssetFailureTypePredictOut, 
+                      AssetFailureTypePredictIn, AssetFailureTypePredictOut,
                       AssetIn, MaintenanceListIn)
-from .db import get_async_session, async_engine, sync_engine
+from .db import get_async_session, sync_engine
 from .models import Base, PredictionJob, JobStatus
 from .utils import request_sha256
 import logging
