@@ -3,14 +3,17 @@ import json
 from contextlib import suppress
 from datetime import datetime
 from typing import Any, Optional
+from pathlib import Path
 
 import asyncpg
 from asyncio_mqtt import Client, MqttError
 
-from settings import daq_settings
+from .settings import settings
 
 
 INSERT_SQL = "INSERT INTO measurements (value, time, sensor_id) VALUES ($1, $2, $3);"
+
+sensor_config = json.loads(Path("sensor_config.json").read_text(encoding="utf-8"))
 
 
 def _parse_timestamp(raw: Any) -> datetime:
@@ -29,27 +32,27 @@ class AsyncIngestService:
     """Aszinkron MQTT -> TimescaleDB rogzito szolgaltatas."""
 
     def __init__(self, mqtt_topic: Optional[str] = None) -> None:
-        self.mqtt_topic = mqtt_topic or daq_settings.MQTT_TOPIC_TO_SUBSCRIBE
-        self.queue: asyncio.Queue = asyncio.Queue(maxsize=daq_settings.QUEUE_MAXSIZE)
+        self.mqtt_topic = mqtt_topic or settings.MQTT_TOPIC_TO_SUBSCRIBE
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=settings.QUEUE_MAXSIZE)
         self.pool: Optional[asyncpg.Pool] = None
         self.client = Client(
-            hostname=daq_settings.MQTT_BROKER_HOST,
-            port=daq_settings.MQTT_BROKER_PORT,
-            username=daq_settings.MQTT_USERNAME or None,
-            password=daq_settings.MQTT_PASSWORD or None,
-            keepalive=daq_settings.MQTT_KEEPALIVE_INTERVAL,
+            hostname=settings.MQTT_BROKER_HOST,
+            port=settings.MQTT_BROKER_PORT,
+            username=settings.MQTT_USERNAME or None,
+            password=settings.MQTT_PASSWORD or None,
+            keepalive=settings.MQTT_KEEPALIVE_INTERVAL,
         )
         self._db_worker_task: Optional[asyncio.Task] = None
 
     async def _init_pool(self) -> None:
         self.pool = await asyncpg.create_pool(
-            host=daq_settings.DB_HOST,
-            port=daq_settings.DB_PORT,
-            database=daq_settings.DB_NAME,
-            user=daq_settings.DB_USER,
-            password=daq_settings.DB_PASSWORD,
-            min_size=daq_settings.DB_POOL_MIN_SIZE,
-            max_size=daq_settings.DB_POOL_MAX_SIZE,
+            host=settings.DB_HOST,
+            port=settings.DB_PORT,
+            database=settings.DB_NAME,
+            user=settings.DB_USER,
+            password=settings.DB_PASSWORD,
+            min_size=settings.DB_POOL_MIN_SIZE,
+            max_size=settings.DB_POOL_MAX_SIZE,
         )
         print("Async DB pool opened.")
 
@@ -84,7 +87,7 @@ class AsyncIngestService:
             print(f"Nem UTF-8 payload: {payload}")
             return
 
-        for key, cfg in daq_settings.SENSOR_CONFIG.items():
+        for key, cfg in sensor_config.items():
             if key not in data or not cfg.get("id"):
                 continue
             timestamp_raw = data.get(cfg["time_key"])
