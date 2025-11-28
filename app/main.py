@@ -8,6 +8,7 @@ from .db import get_async_session, sync_engine
 from .models import Base, PredictionJob, JobStatus
 from .utils import request_sha256
 import logging
+from .daq_func import AsyncIngestService
 
 log = logging.getLogger("api")
 logging.basicConfig(level=logging.INFO)
@@ -98,3 +99,8 @@ async def cmms_get_maintenance_list(maintenance_list_id: str, session: AsyncSess
     if not result:
         return {"maintenance_list_id": maintenance_list_id, "maintenance_list_name": "Unknown"}
     return MaintenanceListIn(maintenance_list_id=result.maintenance_list_id, maintenance_list_name=result.maintenance_list_name)
+
+
+async def main() -> None:
+    service = AsyncIngestService()
+    await service.run()
