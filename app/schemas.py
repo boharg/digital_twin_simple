@@ -10,14 +10,11 @@ class AssetPredictIn(BaseModel):
     maintenance_end_time: datetime
     source_sys_time: datetime
     asset_id: UUID
-    # A predikcióhoz szükséges lehet:
-    failure_type_id: Optional[UUID] = None
     default_reliability: Optional[List[float]] = None  # ha nincs eta/beta
 
 
 class AssetPredictOut(BaseModel):
     prediction_id: UUID
-    predicted_value: float
 
 
 class AssetFailureTypePredictIn(BaseModel):
@@ -26,8 +23,7 @@ class AssetFailureTypePredictIn(BaseModel):
     maintenance_end_time: datetime
     source_sys_time: datetime
     asset_id: UUID
-    # A predikcióhoz szükséges lehet:
-    failure_type_id: Optional[UUID] = None
+    failure_type_id: UUID
     default_reliability: Optional[List[float]] = None
 
 

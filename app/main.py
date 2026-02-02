@@ -78,23 +78,3 @@ async def workrequest(body: AssetFailureTypePredictIn, session: AsyncSession = D
     await session.commit()
     await session.refresh(job)
     return AssetFailureTypePredictOut(prediction_id=str(job.job_id))
-
-
-@app.get("/asset", response_model=AssetIn, status_code=status.HTTP_200_OK)
-async def cmms_get_asset(asset_id: str, session: AsyncSession = Depends(get_async_session)):
-    result = (await session.execute(
-        select(Base).where(Base.asset_id == asset_id)
-    )).scalar_one_or_none()
-    if not result:
-        return {"asset_id": asset_id, "asset_name": "Unknown"}
-    return AssetIn(asset_id=result.asset_id, asset_name=result.asset_name)
-
-
-@app.get("/maintenance_lists", response_model=MaintenanceListIn, status_code=status.HTTP_200_OK)
-async def cmms_get_maintenance_list(maintenance_list_id: str, session: AsyncSession = Depends(get_async_session)):
-    result = (await session.execute(
-        select(Base).where(Base.maintenance_list_id == maintenance_list_id)
-    )).scalar_one_or_none()
-    if not result:
-        return {"maintenance_list_id": maintenance_list_id, "maintenance_list_name": "Unknown"}
-    return MaintenanceListIn(maintenance_list_id=result.maintenance_list_id, maintenance_list_name=result.maintenance_list_name)

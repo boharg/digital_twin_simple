@@ -364,7 +364,7 @@ def ensure_asset_maintenance_lists_asset_failure_type(
         .where(AssetFailureTypeAssetMaintenanceList.asset_failure_type_id == aft_uuid)
     ).scalars().all())
 
-    # Create missing mappings
+    # Create missing mappings  # ! CMMS-bol lekerni, ha nincs sajat db-ben
     for aml_id, _ml_id in aml_rows:
         if aml_id in existing_aml_ids:
             continue
@@ -405,11 +405,12 @@ def process_job(session: Session, job: PredictionJob):
         session.commit()
         return
 
-    if not ensure_failure_type(session, failure_type_id):
-        job.status = JobStatus.not_found
-        job.error_message = "Failure type not found in DB/CMMS"
-        session.commit()
-        return
+    if job.endpoint_type == "asset_failure_type_predict":
+        if not ensure_failure_type(session, failure_type_id):
+            job.status = JobStatus.not_found
+            job.error_message = "Failure type not found in DB/CMMS"
+            session.commit()
+            return
 
     # 2) Check for data
     # if not has_gamma_data(session, asset_id, failure_type_id, start, end):
@@ -429,12 +430,13 @@ def process_job(session: Session, job: PredictionJob):
         return
 
     # 3) asset_failure_type_id feloldás
-    aft_id = ensure_asset_failure_type_id(session, asset_id, failure_type_id)
-    if aft_id is None:
-        job.status = JobStatus.not_found
-        job.error_message = "asset_failure_type mapping not found"
-        session.commit()
-        return
+    if job.endpoint_type == "asset_failure_type_predict":
+        aft_id = ensure_asset_failure_type_id(session, asset_id, failure_type_id)
+        if aft_id is None:
+            job.status = JobStatus.not_found
+            job.error_message = "asset_failure_type mapping not found"
+            session.commit()
+            return
 
     aml = ensure_asset_maintenance_lists(session, asset_id)
     if aml is None:
@@ -443,12 +445,13 @@ def process_job(session: Session, job: PredictionJob):
         session.commit()
         return
 
-    amlaft = ensure_asset_maintenance_lists_asset_failure_type(session, asset_id, failure_type_id)
-    if not amlaft:
-        job.status = JobStatus.not_found
-        job.error_message = "asset_maintenanace_list_asset_failure_type mapping not found"
-        session.commit()
-        return
+    if job.endpoint_type == "asset_failure_type_predict":
+        amlaft = ensure_asset_maintenance_lists_asset_failure_type(session, asset_id, failure_type_id)
+        if not amlaft:
+            job.status = JobStatus.not_found
+            job.error_message = "asset_maintenanace_list_asset_failure_type mapping not found"
+            session.commit()
+            return
 
     # 4) Eta/Beta felkutatása (legutóbbi érték a window végéig)
     # eta_val, beta_val = get_latest_eta_beta(session, aft_id, end)
