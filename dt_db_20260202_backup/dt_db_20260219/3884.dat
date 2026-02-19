@@ -1,0 +1,9 @@
+1	1_1_measurements_pkey	1	measurements_pkey
+1	_hyper_1_1_chunk_measurements_time_idx	1	measurements_time_idx
+2	2_3_measurements_pkey	1	measurements_pkey
+2	_hyper_1_2_chunk_measurements_time_idx	1	measurements_time_idx
+3	3_5_measurements_pkey	1	measurements_pkey
+3	_hyper_1_3_chunk_measurements_time_idx	1	measurements_time_idx
+\.
+
+
