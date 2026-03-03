@@ -476,7 +476,7 @@ def process_job(session: Session, job: PredictionJob):
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
         pred_id = insert_prediction_row(session=session, aft_id=aft_id, predicted_reliability=prediction.predicted_reliability, 
                                         pred_time=source_time, pred_future_time=prediction_future_time,)
-        out = {"prediction_id": str(pred_id), "predicted_reliability": float(prediction.predicted_reliability)}
+        out = {"prediction_id": pred_id, "predicted_reliability": prediction.predicted_reliability}
 
         # JSON
         json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
@@ -523,7 +523,7 @@ def process_job(session: Session, job: PredictionJob):
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
         pred_id = insert_prediction_row(session=session, aft_id=aft_id, failure_type_probability=prediction.failure_type_probability, 
                                         pred_time=source_time, pred_future_time=prediction_future_time,)
-        out = {"prediction_id": str(pred_id), "failure_type_ids": prediction.failure_type_ids, "failure_type_probability": prediction.failure_type_probability}
+        out = {"prediction_id": pred_id, "failure_type_ids": prediction.failure_type_ids, "failure_type_probability": prediction.failure_type_probability}
 
         # JSON
         json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")

@@ -11,7 +11,7 @@ def weibull_reliability(delta_seconds: float, eta: float, beta: float) -> float:
     return math.exp(-((delta_seconds / eta) ** beta))
 
 
-def predict_reliability(
+def predict(
     asset_id: int,
     prediction_future_time: datetime,
     failure_start_time: Optional[datetime],
