@@ -1,15 +1,12 @@
 import hashlib, json, os, tempfile, shutil
 from pathlib import Path
 from datetime import datetime, date
-import uuid
 
 
 def request_sha256(payload: dict) -> str:
     def default(o):
         if isinstance(o, (date, datetime)):
             return o.isoformat()
-        if isinstance(o, uuid.UUID):
-            return str(o)
         raise TypeError(f"Type {type(o)} not serializable")
 
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=default).encode()
