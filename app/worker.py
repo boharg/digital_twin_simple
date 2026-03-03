@@ -530,14 +530,14 @@ def process_job(session: Session, job: PredictionJob):
         atomic_write_json(json_path, out)
 
         # prediction tábla
-        #insert_prediction_row(
+        # insert_prediction_row(
         #    session=session,
         #    prediction_id=pred_id,
         #    aft_id=aft_id,
         #    predicted_reliability=float(value),
         #    pred_time=source_time,
         #    pred_future_time=prediction_future_time
-        #)
+        # )
 
         try:
             resp = cmms_post_asset_failure_type_prediction_sync(out)
