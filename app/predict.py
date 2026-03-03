@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Sequence, Optional
+from typing import Sequence, Optional, List
 import math
 
 
@@ -11,10 +11,13 @@ def weibull_reliability(delta_seconds: float, eta: float, beta: float) -> float:
 
 
 def predict_reliability(
+    asset_id: int,
     prediction_future_time: datetime,
-    failure_start_time: datetime,
+    failure_start_time: Optional[datetime],
     maintenance_end_time: datetime,
     source_sys_time: datetime,
+    operation_ids: List[int],
+    failure_type_ids: Optional[List[int]] = None,
     eta_value: Optional[float] = None,
     beta_value: Optional[float] = None,
     default_reliability: Optional[Sequence[float]] = None,
