@@ -68,20 +68,20 @@ def insert_prediction_row(session: Session, aft_id: int, predicted_reliability: 
     pr = max(0.0, min(1.0, float(predicted_reliability)))
 
     pred = Prediction(
-        asset_failure_type_id=int(aft_id),
+        asset_failure_type_id=aft_id,
         predicted_reliability=pr,
         time=pred_time,
         prediction_future_time=pred_future_time,
     )
     if prediction_id is not None:
-        pred.prediction_id = int(prediction_id)
+        pred.prediction_id = prediction_id
 
     session.add(pred)
     session.flush()  # itt töltődik fel az autoincrement ID
     return pred.prediction_id
 
 
-def ensure_asset(session: Session, asset_id: str) -> bool:
+def ensure_asset(session: Session, asset_id: int) -> bool:
     asset = session.get(Asset, asset_id)
     if asset:
         return True
@@ -95,7 +95,7 @@ def ensure_asset(session: Session, asset_id: str) -> bool:
     return True
 
 
-def ensure_failure_type(session: Session, failure_type_id: str | None) -> bool:
+def ensure_failure_type(session: Session, failure_type_id: int | None) -> bool:
     if failure_type_id is None:
         return False
     ft = session.get(FailureType, failure_type_id)
@@ -112,20 +112,19 @@ def ensure_failure_type(session: Session, failure_type_id: str | None) -> bool:
     return True
 
 
-def has_any_maintenance_list_for_asset(session: Session, asset_id: str) -> bool:
+def has_any_maintenance_list_for_asset(session: Session, asset_id: int) -> bool:
     """
     True if the asset has at least one asset_maintenance_list row.
     """
-    a_id = int(asset_id)
     row = session.execute(
         select(AssetMaintenanceList.asset_maintenance_list_id)
-        .where(AssetMaintenanceList.asset_id == a_id)
+        .where(AssetMaintenanceList.asset_id == asset_id)
         .limit(1)
     ).first()
     return bool(row)
 
 
-def has_gamma_data(session: Session, asset_id: str, failure_type_id: str | None,
+def has_gamma_data(session: Session, asset_id: str, failure_type_id: int | None,
                    start: datetime, end: datetime) -> bool:
     """
     Van-e gamma adat a megadott asset + failure_type kapcsolathoz az időablakban?
@@ -150,7 +149,7 @@ def has_gamma_data(session: Session, asset_id: str, failure_type_id: str | None,
     return bool(q)
 
 
-def has_maintenanace_list(session: Session, operation_id: str) -> bool:
+def has_maintenanace_list(session: Session, operation_id: int) -> bool:
     """
     Van-e maintenance_list az adott operation_id-hez?
     operations_maintenance_list táblában keresünk.
@@ -164,7 +163,7 @@ def has_maintenanace_list(session: Session, operation_id: str) -> bool:
     return bool(row)
 
 
-def ensure_maintenance_list_row(session: Session, maintenance_list_id: str) -> bool:
+def ensure_maintenance_list_row(session: Session, maintenance_list_id: int) -> bool:
     """
     Ensure a MaintenanceList row exists. If missing, try to fetch details from CMMS.
     """
@@ -187,7 +186,7 @@ def ensure_maintenance_list_row(session: Session, maintenance_list_id: str) -> b
     return True
 
 
-def ensure_operation_maintenanace_lists(session: Session, operation_id: str) -> list[str]:
+def ensure_operation_maintenanace_lists(session: Session, operation_id: int) -> list[str]:
     # 1) Try DB mapping first
     op_uuid = int(operation_id)
     db_ids = session.execute(
@@ -222,7 +221,7 @@ def ensure_operation_maintenanace_lists(session: Session, operation_id: str) -> 
     return bool(ml_ids)
 
 
-def ensure_asset_maintenance_lists(session: Session, asset_id: str) -> list[str]:
+def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]:
     """
     Ensure maintenance_list mappings for the given asset.
     - If mappings exist locally, return them.
