@@ -1,7 +1,7 @@
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import (String, JSON, Enum, Index, Float, Text,
                         ForeignKey, DateTime, Boolean)
-from sqlalchemy import Integer, BigInteger
+from sqlalchemy import BigInteger
 from datetime import datetime
 import enum
 
@@ -30,7 +30,7 @@ class PredictionJob(Base):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), default=JobStatus.queued, nullable=False)
     endpoint_type: Mapped[str] = mapped_column(String, nullable=False)  # pl. "asset_predict" vagy "asset_failure_type_predict" # ! db frissítése szükséges
-    prediction_id: Mapped[int| None] = mapped_column(BigInteger, nullable=True)
+    prediction_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

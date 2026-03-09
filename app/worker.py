@@ -22,7 +22,6 @@ from .cmms import (cmms_get_asset,
                    cmms_post_asset_prediction_sync,
                    cmms_get_operation_maintenance_lists,
                    cmms_get_asset_maintenance_lists,
-                   cmms_get_asset_failure_type_asset_maintenance_lists,
                    cmms_post_asset_failure_type_prediction_sync,
                    cmms_get_asset_failure_type_operations)
 from .schemas import AssetPredictIn, AssetFailureTypePredictIn
