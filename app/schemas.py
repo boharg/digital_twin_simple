@@ -53,3 +53,14 @@ class FailureTypeIn(BaseModel):
 class MaintenanceListIn(BaseModel):
     maintenance_list_id: int
     maintenance_list_name: str = Field(min_length=1)
+
+
+class OperationOut(BaseModel):
+    operation_id: int
+    type: str  # PREVENTIVE | CORRECTIVE | BOTH | UNKNOWN
+
+
+class AssetFailureTypeOperationsOut(BaseModel):
+    failure_type_id: int
+    asset_id: int
+    operations: List[OperationOut]

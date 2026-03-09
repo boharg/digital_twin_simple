@@ -23,11 +23,13 @@ from .cmms import (cmms_get_asset,
                    cmms_get_operation_maintenance_lists,
                    cmms_get_asset_maintenance_lists,
                    cmms_get_asset_failure_type_asset_maintenance_lists,
-                   cmms_post_asset_failure_type_prediction_sync)
-from .schemas import AssetPredictIn
+                   cmms_post_asset_failure_type_prediction_sync,
+                   cmms_get_asset_failure_type_operations)
+from .schemas import AssetPredictIn, AssetFailureTypePredictIn
 
 
 POLL_INTERVAL_SEC = 1.0
+ALLOWED_OPERATION_TYPES = {"BOTH", "CORRECTIVE", "PREVENTIVE"}
 
 
 @contextmanager
@@ -63,16 +65,19 @@ def claim_one_job(session: Session) -> PredictionJob | None:
     return job
 
 
-def insert_prediction_row(session: Session, aft_id: int, predicted_reliability: float, pred_time: datetime,
-    pred_future_time: datetime, prediction_id: int | None = None) -> int:
+def insert_prediction_row(session: Session, predicted_reliability: float, pred_time: datetime,
+                          pred_future_time: datetime, aft_id: int | None = None, prediction_id: int | None = None) -> int:
+
     pr = max(0.0, min(1.0, float(predicted_reliability)))
 
     pred = Prediction(
-        asset_failure_type_id=aft_id,
         predicted_reliability=pr,
         time=pred_time,
         prediction_future_time=pred_future_time,
     )
+
+    if aft_id is not None:
+        pred.asset_failure_type_id = aft_id
     if prediction_id is not None:
         pred.prediction_id = prediction_id
 
@@ -124,7 +129,7 @@ def has_any_maintenance_list_for_asset(session: Session, asset_id: int) -> bool:
     return bool(row)
 
 
-def has_gamma_data(session: Session, asset_id: str, failure_type_id: int | None,
+def has_gamma_data(session: Session, asset_id: int, failure_type_id: int | None,
                    start: datetime, end: datetime) -> bool:
     """
     Van-e gamma adat a megadott asset + failure_type kapcsolathoz az időablakban?
@@ -154,7 +159,7 @@ def has_maintenanace_list(session: Session, operation_id: int) -> bool:
     Van-e maintenance_list az adott operation_id-hez?
     operations_maintenance_list táblában keresünk.
     """
-    op_id = int(operation_id)
+    op_id = operation_id
     row = session.execute(
         select(OperationsMaintenanceList.maintenance_list_id)
         .where(OperationsMaintenanceList.operation_id == op_id)
@@ -167,8 +172,8 @@ def ensure_maintenance_list_row(session: Session, maintenance_list_id: int) -> b
     """
     Ensure a MaintenanceList row exists. If missing, try to fetch details from CMMS.
     """
-    ml_uuid = int(maintenance_list_id)
-    ml = session.get(MaintenanceList, ml_uuid)
+    ml_id = maintenance_list_id
+    ml = session.get(MaintenanceList, ml_id)
     if ml:
         return True
 
@@ -179,7 +184,7 @@ def ensure_maintenance_list_row(session: Session, maintenance_list_id: int) -> b
         pass
 
     session.add(MaintenanceList(
-        maintenance_list_id=ml_uuid,
+        maintenance_list_id=ml_id,
         maintenance_list_name=(ml_json or {}).get("maintenance_list_name", "")
     ))
     session.flush()
@@ -188,10 +193,10 @@ def ensure_maintenance_list_row(session: Session, maintenance_list_id: int) -> b
 
 def ensure_operation_maintenanace_lists(session: Session, operation_id: int) -> list[str]:
     # 1) Try DB mapping first
-    op_uuid = int(operation_id)
+    op_id = operation_id
     db_ids = session.execute(
         select(OperationsMaintenanceList.maintenance_list_id)
-        .where(OperationsMaintenanceList.operation_id == op_uuid)
+        .where(OperationsMaintenanceList.operation_id == op_id)
     ).scalars().all()
     if db_ids:
         return [str(x) for x in db_ids]
@@ -214,7 +219,7 @@ def ensure_operation_maintenanace_lists(session: Session, operation_id: int) -> 
         # ensure operation -> maintenance_list mapping
         session.merge(OperationsMaintenanceList(
             maintenance_list_id=int(ml_id),
-            operation_id=op_uuid
+            operation_id=op_id
         ))
     if ml_ids:
         session.flush()
@@ -229,12 +234,12 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]
     - If CMMS rows include operation_id, also upsert operations_maintenance_list.
     Returns the maintenance_list_ids mapped to the asset.
     """
-    a_uuid = int(asset_id)
+    a_id = asset_id
 
     # 1) Local mappings
     db_ml_ids = session.execute(
         select(AssetMaintenanceList.maintenance_list_id)
-        .where(AssetMaintenanceList.asset_id == a_uuid)
+        .where(AssetMaintenanceList.asset_id == a_id)
     ).scalars().all()
     if db_ml_ids:
         return [str(x) for x in db_ml_ids]
@@ -253,7 +258,7 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]
         ml_id = r.get("maintenance_list_id")
         if not ml_id:
             continue
-        ml_uuid = int(ml_id)
+        ml_id = int(ml_id)
 
         # Ensure maintenance_list row exists (pulls name if needed)
         ensure_maintenance_list_row(session, ml_id)
@@ -261,12 +266,12 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]
         # Ensure asset -> maintenance_list mapping
         exists_aml = session.execute(
             select(AssetMaintenanceList.asset_maintenance_list_id).where(
-                AssetMaintenanceList.asset_id == a_uuid,
-                AssetMaintenanceList.maintenance_list_id == ml_uuid
+                AssetMaintenanceList.asset_id == a_id,
+                AssetMaintenanceList.maintenance_list_id == ml_id
             ).limit(1)
         ).first()
         if not exists_aml:
-            session.add(AssetMaintenanceList(asset_id=a_uuid, maintenance_list_id=ml_uuid))
+            session.add(AssetMaintenanceList(asset_id=a_id, maintenance_list_id=ml_id))
 
         # Optionally ensure operation -> maintenance_list mapping if provided by CMMS
         op_id = r.get("operation_id")
@@ -274,13 +279,13 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]
             op_uuid = int(op_id)
             exists_oml = session.execute(
                 select(OperationsMaintenanceList.maintenance_list_id).where(
-                    OperationsMaintenanceList.maintenance_list_id == ml_uuid,
+                    OperationsMaintenanceList.maintenance_list_id == ml_id,
                     OperationsMaintenanceList.operation_id == op_uuid
                 ).limit(1)
             ).first()
             if not exists_oml:
                 session.add(OperationsMaintenanceList(
-                    maintenance_list_id=ml_uuid,
+                    maintenance_list_id=ml_id,
                     operation_id=op_uuid
                 ))
 
@@ -289,18 +294,18 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]
     # Re-read and return
     db_ml_ids = session.execute(
         select(AssetMaintenanceList.maintenance_list_id)
-        .where(AssetMaintenanceList.asset_id == a_uuid)
+        .where(AssetMaintenanceList.asset_id == a_id)
     ).scalars().all()
     return [str(x) for x in db_ml_ids]
 
 
-def get_latest_eta_beta(session: Session, asset_failure_type_id: str, asof: datetime):
+def get_latest_eta_beta(session: Session, asset_failure_type_id: int, asof: datetime):
     """
     Legutóbbi eta/beta az adott asset_failure_type-re, as-of 'asof' időpontra.
     """
     row = session.execute(
         select(EtaBeta.eta_value, EtaBeta.beta_value)
-        .where(EtaBeta.asset_failure_type_id == int(asset_failure_type_id),
+        .where(EtaBeta.asset_failure_type_id == asset_failure_type_id,
                EtaBeta.time <= asof)
         .order_by(EtaBeta.time.desc())
         .limit(1)
@@ -308,8 +313,8 @@ def get_latest_eta_beta(session: Session, asset_failure_type_id: str, asof: date
     return (row[0], row[1]) if row else (None, None)
 
 
-def ensure_asset_failure_type_id(session: Session, asset_id: str,
-                                 failure_type_id: str | None) -> str | None:
+def ensure_asset_failure_type_id(session: Session, asset_id: int,
+                                 failure_type_id: int | None) -> int | None:
     """
     Keresünk AssetFailureType rekordot. Ha nincs failure_type_id: None.
     """
@@ -317,18 +322,18 @@ def ensure_asset_failure_type_id(session: Session, asset_id: str,
         return None
     aft = session.execute(
         select(AssetFailureType.asset_failure_type_id).where(
-            AssetFailureType.asset_id == int(asset_id),
-            AssetFailureType.failure_type_id == int(failure_type_id)
+            AssetFailureType.asset_id == asset_id,
+            AssetFailureType.failure_type_id == failure_type_id
         ).limit(1)
     ).scalar_one_or_none()
-    return str(aft) if aft else None
+    return int(aft) if aft is not None else None
 
 
 def ensure_asset_maintenance_lists_asset_failure_type(
     session: Session,
-    asset_id: str,
-    failure_type_id: str,
-) -> list[str]:
+    asset_id: int,
+    failure_type_id: int,
+) -> list[int]:
     """
     Ensure AFT ↔ AML mappings for the given asset and failure type.
     - Ensures AMLs for asset (DB or CMMS)
@@ -336,7 +341,7 @@ def ensure_asset_maintenance_lists_asset_failure_type(
     - Creates missing AssetFailureTypeAssetMaintenanceList mappings
     Returns maintenance_list_ids mapped for this AFT.
     """
-    a_uuid = int(asset_id)
+    a_id = int(asset_id)
 
     # Ensure AMLs exist for the asset
     ml_ids = ensure_asset_maintenance_lists(session, asset_id)
@@ -347,20 +352,20 @@ def ensure_asset_maintenance_lists_asset_failure_type(
     aft_id = ensure_asset_failure_type_id(session, asset_id, failure_type_id)
     if not aft_id:
         return []
-    aft_uuid = int(aft_id)
+    aft_id = int(aft_id)
 
     # Get all AML rows for this asset (need AML ids and their ML ids)
     aml_rows = session.execute(
         select(
             AssetMaintenanceList.asset_maintenance_list_id,
             AssetMaintenanceList.maintenance_list_id,
-        ).where(AssetMaintenanceList.asset_id == a_uuid)
+        ).where(AssetMaintenanceList.asset_id == a_id)
     ).all()
 
     # Existing mappings for this AFT
     existing_aml_ids: set[int] = set(session.execute(
         select(AssetFailureTypeAssetMaintenanceList.asset_maintenance_list_id)
-        .where(AssetFailureTypeAssetMaintenanceList.asset_failure_type_id == aft_uuid)
+        .where(AssetFailureTypeAssetMaintenanceList.asset_failure_type_id == aft_id)
     ).scalars().all())
 
     # Create missing mappings  # ! CMMS-bol lekerni, ha nincs sajat db-ben
@@ -368,7 +373,7 @@ def ensure_asset_maintenance_lists_asset_failure_type(
         if aml_id in existing_aml_ids:
             continue
         session.add(AssetFailureTypeAssetMaintenanceList(
-            asset_failure_type_id=aft_uuid,
+            asset_failure_type_id=aft_id,
             asset_maintenance_list_id=aml_id,
             default_reliability=1
         ))
@@ -376,13 +381,65 @@ def ensure_asset_maintenance_lists_asset_failure_type(
     session.flush()
 
     # Return the maintenance_list_ids mapped for this AFT (from the asset’s AMLs)
-    return [str(ml_id) for (_aml_id, ml_id) in aml_rows]
+    return [int(ml_id) for (_aml_id, ml_id) in aml_rows]
+
+
+def fetch_cmms_asset_failure_type_operations(
+    asset_id: int,
+    failure_type_id: int | None,
+) -> tuple[list[tuple[int, str]] | None, str | None]:
+    """
+    CMMS-ből lekéri az asset/failure_type műveleteket.
+    Visszaadja a (operation_id, type) listát vagy hibaszöveget.
+    """
+    try:
+        rows = asyncio.run(cmms_get_asset_failure_type_operations(asset_id, failure_type_id)) or []
+    except Exception:
+        return None, "CMMS asset_failure_type_operations fetch failed"
+
+    if not rows:
+        return None, "No asset_failure_type_operations data in CMMS"
+
+    matched = []
+    for r in rows:
+        r_asset = r.get("asset_id")
+        r_ft = r.get("failure_type_id")
+        if r_asset is None:
+            continue
+        if int(r_asset) != int(asset_id):
+            continue
+        if failure_type_id is not None and r_ft is not None and int(r_ft) != int(failure_type_id):
+            continue
+        matched.append(r)
+
+    if not matched:
+        return None, "No asset_failure_type_operations mapping found for asset/failure_type"
+
+    ops: list[tuple[int, str]] = []
+    for r in matched:
+        for op in (r.get("operations") or []):
+            op_id = op.get("operation_id")
+            op_type = op.get("type")
+            if op_id is None or op_type is None:
+                return None, "Invalid CMMS asset_failure_type_operations payload"
+            ops.append((int(op_id), str(op_type)))
+
+    if not ops:
+        return None, "No operations in CMMS response"
+
+    invalid_types = {t for _, t in ops if t not in ALLOWED_OPERATION_TYPES}
+    if invalid_types:
+        return None, f"Invalid operation type in CMMS data: {sorted(invalid_types)}"
+
+    return ops, None
 
 
 def process_job(session: Session, job: PredictionJob):
     try:
-        # Validate the payload
-        p = AssetPredictIn(**job.payload)
+        if job.endpoint_type == "asset_failure_type_predict":
+            p = AssetFailureTypePredictIn(**job.payload)
+        else:
+            p = AssetPredictIn(**job.payload)
     except ValidationError as e:
         job.status = JobStatus.error
         job.error_message = f"Payload validation failed: {e}"
@@ -393,7 +450,8 @@ def process_job(session: Session, job: PredictionJob):
     start = p.failure_start_time
     end = p.maintenance_end_time
     source_time = p.source_sys_time
-    failure_type_id = int(p.failure_type_id)
+    failure_type_id_raw = getattr(p, "failure_type_id", None)
+    failure_type_id = int(failure_type_id_raw) if failure_type_id_raw is not None else None
     op_raw = p.operation_id
     operation_ids: list[int] = [x for x in (op_raw if isinstance(op_raw, (list, tuple)) else [op_raw])]
 
@@ -410,6 +468,22 @@ def process_job(session: Session, job: PredictionJob):
             job.error_message = "Failure type not found in DB/CMMS"
             session.commit()
             return
+
+    cmms_ft_id = failure_type_id if job.endpoint_type == "asset_failure_type_predict" else None
+    cmms_ops, cmms_err = fetch_cmms_asset_failure_type_operations(asset_id, cmms_ft_id)
+    if cmms_err:
+        job.status = JobStatus.not_found
+        job.error_message = cmms_err
+        session.commit()
+        return
+
+    cmms_op_ids = {op_id for op_id, _op_type in (cmms_ops or [])}
+    missing_ops = [op_id for op_id in operation_ids if op_id not in cmms_op_ids]
+    if missing_ops:
+        job.status = JobStatus.not_found
+        job.error_message = f"Operation ids not allowed by CMMS: {missing_ops}"
+        session.commit()
+        return
 
     # 2) Check for data
     # if not has_gamma_data(session, asset_id, failure_type_id, start, end):
@@ -473,23 +547,13 @@ def process_job(session: Session, job: PredictionJob):
         )
         print(prediction)
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
-        pred_id = insert_prediction_row(session=session, aft_id=aft_id, predicted_reliability=prediction.predicted_reliability, 
+        pred_id = insert_prediction_row(session=session, predicted_reliability=prediction["predicted_reliability"],
                                         pred_time=source_time, pred_future_time=prediction_future_time,)
-        out = {"prediction_id": pred_id, "predicted_reliability": prediction.predicted_reliability}
+        out = {"prediction_id": pred_id, "predicted_reliability": prediction["predicted_reliability"]}
 
         # JSON
         json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
         atomic_write_json(json_path, out)
-
-        # prediction tábla
-        insert_prediction_row(
-            session=session,
-            prediction_id=pred_id,
-            aft_id=aft_id,
-            predicted_reliability=float(prediction.predicted_reliability),
-            pred_time=source_time,
-            pred_future_time=prediction_future_time
-        )
 
         # CMMS POST (ha elbukik, itt nem retry-olunk automatikusan – log + status=error)
         try:
@@ -513,30 +577,20 @@ def process_job(session: Session, job: PredictionJob):
             maintenance_end_time=end,
             source_sys_time=source_time,
             operation_ids=operation_ids,
-            failure_type_ids=failure_type_id,
+            failure_type_ids=[failure_type_id],
             # eta_value=eta_val,
             # beta_value=beta_val,
             # default_reliability=p.get("default_reliability"),
         )
 
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
-        pred_id = insert_prediction_row(session=session, aft_id=aft_id, failure_type_probability=prediction.failure_type_probability, 
+        pred_id = insert_prediction_row(session=session, aft_id=aft_id, predicted_reliability=prediction["predicted_reliability"],
                                         pred_time=source_time, pred_future_time=prediction_future_time,)
-        out = {"prediction_id": pred_id, "failure_type_ids": prediction.failure_type_ids, "failure_type_probability": prediction.failure_type_probability}
+        out = {"prediction_id": pred_id, "failure_type_ids": prediction["failure_type_ids"], "failure_type_probability": prediction["failure_type_probability"]}
 
         # JSON
         json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
         atomic_write_json(json_path, out)
-
-        # prediction tábla
-        # insert_prediction_row(
-        #    session=session,
-        #    prediction_id=pred_id,
-        #    aft_id=aft_id,
-        #    predicted_reliability=float(value),
-        #    pred_time=source_time,
-        #    pred_future_time=prediction_future_time
-        # )
 
         try:
             resp = cmms_post_asset_failure_type_prediction_sync(out)

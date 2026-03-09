@@ -104,7 +104,7 @@ class EtaBeta(Base):
 class Prediction(Base):
     __tablename__ = "prediction"
     prediction_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    asset_failure_type_id: Mapped[int] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=False)
+    asset_failure_type_id: Mapped[int] = mapped_column(ForeignKey("asset_failure_type.asset_failure_type_id"), nullable=True)
     predicted_reliability: Mapped[float] = mapped_column(Float, nullable=False)
     time: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # mikor készült a predikció (pl. source_sys_time)
     prediction_future_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # amire jósolunk

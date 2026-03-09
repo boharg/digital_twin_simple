@@ -27,18 +27,19 @@ def predict(
     Ha van eta/beta: Weibull megbízhatóság a maintenance_end_time → prediction_future_time horizonton.
     Ha nincs: fallback a default_reliability átlagára (vagy 0.9).
     """
-    count = len(failure_type_ids)
-    if count == 0:
-        return {"failure_type_probability": [], "predicted_reliability": 1.0}
+    
+    if not failure_type_ids:
+        return {"failure_type_ids": [], "failure_type_probability": [], "predicted_reliability": 1.0}
+    else:
+        count = len(failure_type_ids)
+        raw = [random.random() for _ in range(count)]
+        raw_sum = sum(raw) or 1.0
+        target_sum = random.random()
 
-    raw = [random.random() for _ in range(count)]
-    raw_sum = sum(raw) or 1.0
-    target_sum = random.random()
+        failure_type_probability = [target_sum * (r / raw_sum) for r in raw]
+        predicted_reliability = 1.0 - sum(failure_type_probability)
 
-    failure_type_probability = [target_sum * (r / raw_sum) for r in raw]
-    predicted_reliability = 1.0 - sum(failure_type_probability)
-
-    return {"failure_type_ids": failure_type_ids, "failure_type_probability": failure_type_probability, "predicted_reliability": predicted_reliability}
+        return {"failure_type_ids": failure_type_ids, "failure_type_probability": failure_type_probability, "predicted_reliability": predicted_reliability}
 
 
 def compute_prediction_future_time(maintenance_end_time: datetime, days_ahead: int = 7) -> datetime:

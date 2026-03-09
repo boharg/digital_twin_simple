@@ -2,8 +2,7 @@ from fastapi import FastAPI, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from .schemas import (AssetPredictIn, AssetPredictOut,
-                      AssetFailureTypePredictIn, AssetFailureTypePredictOut,
-                      AssetIn, MaintenanceListIn)
+                      AssetFailureTypePredictIn, AssetFailureTypePredictOut)
 from .db import get_async_session, sync_engine
 from .models import Base, PredictionJob, JobStatus
 from .utils import request_sha256
@@ -37,13 +36,13 @@ async def asset_predict(body: AssetPredictIn, session: AsyncSession = Depends(ge
     )).scalar_one_or_none()
     if existing:
         log.info("Idempotent hit job_id=%s status=%s", existing.job_id, existing.status)
-        return AssetPredictOut(prediction_id=str(existing.prediction_id) if existing.prediction_id else str(existing.job_id))
+        return AssetPredictOut(prediction_id=existing.prediction_id or existing.job_id)
     job = PredictionJob(request_hash=req_hash, payload=payload, status=JobStatus.queued, endpoint_type="asset_predict")
     session.add(job)
     await session.commit()
     await session.refresh(job)
     log.info("Queued new job %s", job.job_id)
-    return AssetPredictOut(prediction_id=str(job.job_id))
+    return AssetPredictOut(prediction_id=job.job_id)
 
 
 @app.post("/asset_failure_type_predict", response_model=AssetFailureTypePredictOut, status_code=status.HTTP_202_ACCEPTED)
@@ -55,12 +54,12 @@ async def asset_failure_type_predict(body: AssetFailureTypePredictIn, session: A
         select(PredictionJob).where(PredictionJob.request_hash == req_hash)
     )).scalar_one_or_none()
     if existing:
-        return AssetFailureTypePredictOut(prediction_id=str(existing.prediction_id) if existing.prediction_id else str(existing.job_id))
+        return AssetFailureTypePredictOut(prediction_id=existing.prediction_id or existing.job_id)
     job = PredictionJob(request_hash=req_hash, payload=payload, status=JobStatus.queued, endpoint_type="asset_failure_type_predict")
     session.add(job)
     await session.commit()
     await session.refresh(job)
-    return AssetFailureTypePredictOut(prediction_id=str(job.job_id))
+    return AssetFailureTypePredictOut(prediction_id=job.job_id)
 
 
 @app.post("/workrequest", response_model=AssetFailureTypePredictOut, status_code=status.HTTP_202_ACCEPTED)
@@ -72,9 +71,9 @@ async def workrequest(body: AssetFailureTypePredictIn, session: AsyncSession = D
         select(PredictionJob).where(PredictionJob.request_hash == req_hash)
     )).scalar_one_or_none()
     if existing:
-        return AssetFailureTypePredictOut(prediction_id=str(existing.prediction_id) if existing.prediction_id else str(existing.job_id))
+        return AssetFailureTypePredictOut(prediction_id=existing.prediction_id or existing.job_id)
     job = PredictionJob(request_hash=req_hash, payload=payload, status=JobStatus.queued)
     session.add(job)
     await session.commit()
     await session.refresh(job)
-    return AssetFailureTypePredictOut(prediction_id=str(job.job_id))
+    return AssetFailureTypePredictOut(prediction_id=job.job_id)

@@ -107,7 +107,7 @@ async def cmms_get_asset_maintenance_lists(asset_id: int) -> list[dict]:
         return []
 
 
-def cmms_post_asset_prediction_sync(payload: dict):
+async def cmms_post_asset_prediction_sync(payload: dict):
     url = f"{settings.CMMS_BASE_URL}/asset_prediction"
     try:
         with httpx.Client(timeout=10.0, headers=_headers()) as client:
@@ -119,7 +119,7 @@ def cmms_post_asset_prediction_sync(payload: dict):
         return {"error": str(e)}
 
 
-def cmms_post_asset_failure_type_prediction_sync(payload: dict):
+async def cmms_post_asset_failure_type_prediction_sync(payload: dict):
     url = f"{settings.CMMS_BASE_URL}/asset_failure_type_prediction"
     try:
         with httpx.Client(timeout=10.0, headers=_headers()) as client:
@@ -131,7 +131,7 @@ def cmms_post_asset_failure_type_prediction_sync(payload: dict):
         return {"error": str(e)}
 
 
-def cmms_post_workrequest(payload: dict):
+async def cmms_post_workrequest(payload: dict):
     url = f"{settings.CMMS_BASE_URL}/workrequest"
     try:
         with httpx.Client(timeout=10.0, headers=_headers()) as client:
@@ -141,3 +141,23 @@ def cmms_post_workrequest(payload: dict):
     except httpx.HTTPError as e:
         print(f"Error posting workrequest: {e}")
         return {"error": str(e)}
+
+
+async def cmms_get_asset_failure_type_operations(
+    asset_id: int | None = None,
+    failure_type_id: int | None = None,
+) -> list[dict]:
+    url = f"{settings.CMMS_BASE_URL}/asset_failure_type_operations"
+    params = {}
+    if asset_id is not None:
+        params["asset_id"] = asset_id
+    if failure_type_id is not None:
+        params["failure_type_id"] = failure_type_id
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            return r.json()
+    except httpx.HTTPError as e:
+        print(f"Error fetching asset_failure_type_operations: {e}")
+        return []
