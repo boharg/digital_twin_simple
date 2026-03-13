@@ -4,7 +4,7 @@ from typing import List, Optional
 
 
 class AssetPredictIn(BaseModel):
-    operation_id: List[int]  # a maintenance műveletekhez
+    operation_ids: List[int]  # a maintenance műveletekhez
     failure_start_time: datetime
     maintenance_end_time: datetime
     source_sys_time: datetime
@@ -17,12 +17,12 @@ class AssetPredictOut(BaseModel):
 
 
 class AssetFailureTypePredictIn(BaseModel):
-    operation_id: List[int]  # a maintenance műveletekhez
+    operation_ids: List[int]  # a maintenance műveletekhez
     failure_start_time: datetime
     maintenance_end_time: datetime
     source_sys_time: datetime
     asset_id: int
-    failure_type_id: int
+    failure_type_ids: List[int]
     default_reliability: Optional[List[float]] = None
 
 

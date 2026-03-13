@@ -49,7 +49,7 @@ DATA_DIR=./prediction_out
 
 ## API (8000-es porton)
 
-uvicorn app.main:app --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## Worker külön terminálban
 

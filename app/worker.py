@@ -445,13 +445,37 @@ def process_job(session: Session, job: PredictionJob):
         session.commit()
         return
 
+    # ---- failure_type_ids normalizálás ----
+    ft_raw = getattr(p, "failure_type_ids", None)
+
+    if ft_raw is None:
+        failure_type_ids: list[int] = []
+    elif isinstance(ft_raw, (list, tuple)):
+        failure_type_ids = [int(x) for x in ft_raw]
+    else:
+        failure_type_ids = [int(ft_raw)]
+
+    # asset_failure_type_predict esetén kötelező
+    if job.endpoint_type == "asset_failure_type_predict" and len(failure_type_ids) == 0:
+        job.status = JobStatus.error
+        job.error_message = "failure_type_ids is required and cannot be empty for asset_failure_type_predict"
+        session.commit()
+        return
+
+    # Minden failure_type_id ellenőrzése (DB -> CMMS). Ha nincs, hiba.
+    for ftid in failure_type_ids:
+        if not ensure_failure_type(session, ftid):
+            job.status = JobStatus.error
+            job.error_message = f"Failure type not found in DB/CMMS: {ftid}"
+            session.commit()
+            return
+
     asset_id = int(p.asset_id)
     start = p.failure_start_time
     end = p.maintenance_end_time
     source_time = p.source_sys_time
-    failure_type_id_raw = getattr(p, "failure_type_id", None)
-    failure_type_id = int(failure_type_id_raw) if failure_type_id_raw is not None else None
-    op_raw = p.operation_id
+
+    op_raw = p.operation_ids
     operation_ids: list[int] = [x for x in (op_raw if isinstance(op_raw, (list, tuple)) else [op_raw])]
 
     # 1) Ensure data exists
@@ -462,27 +486,13 @@ def process_job(session: Session, job: PredictionJob):
         return
 
     if job.endpoint_type == "asset_failure_type_predict":
-        if not ensure_failure_type(session, failure_type_id):
-            job.status = JobStatus.not_found
-            job.error_message = "Failure type not found in DB/CMMS"
-            session.commit()
-            return
-
-    cmms_ft_id = failure_type_id if job.endpoint_type == "asset_failure_type_predict" else None
-    cmms_ops, cmms_err = fetch_cmms_asset_failure_type_operations(asset_id, cmms_ft_id)
-    if cmms_err:
-        job.status = JobStatus.not_found
-        job.error_message = cmms_err
-        session.commit()
-        return
-
-    cmms_op_ids = {op_id for op_id, _op_type in (cmms_ops or [])}
-    missing_ops = [op_id for op_id in operation_ids if op_id not in cmms_op_ids]
-    if missing_ops:
-        job.status = JobStatus.not_found
-        job.error_message = f"Operation ids not allowed by CMMS: {missing_ops}"
-        session.commit()
-        return
+        for ftid in failure_type_ids:
+            cmms_ops, cmms_err = fetch_cmms_asset_failure_type_operations(asset_id, ftid)
+            if cmms_err:
+                job.status = JobStatus.not_found
+                job.error_message = cmms_err
+                session.commit()
+                return
 
     # 2) Check for data
     # if not has_gamma_data(session, asset_id, failure_type_id, start, end):
@@ -503,10 +513,20 @@ def process_job(session: Session, job: PredictionJob):
 
     # 3) asset_failure_type_id feloldás
     if job.endpoint_type == "asset_failure_type_predict":
-        aft_id = ensure_asset_failure_type_id(session, asset_id, failure_type_id)
+        for ftid in failure_type_ids:
+            aft_id = ensure_asset_failure_type_id(session, asset_id, ftid)
+            if aft_id is None:
+                job.status = JobStatus.not_found
+                job.error_message = f"asset_failure_type mapping not found for failure_type_id {ftid}"
+                session.commit()
+                return
+
+        # 2) Egy predikcióhoz az első ftid-hez tartozó aft_id-t használjuk
+        primary_ftid = failure_type_ids[0]
+        aft_id = ensure_asset_failure_type_id(session, asset_id, primary_ftid)
         if aft_id is None:
             job.status = JobStatus.not_found
-            job.error_message = "asset_failure_type mapping not found"
+            job.error_message = f"asset_failure_type mapping not found for failure_type_id {primary_ftid}"
             session.commit()
             return
 
@@ -518,12 +538,13 @@ def process_job(session: Session, job: PredictionJob):
         return
 
     if job.endpoint_type == "asset_failure_type_predict":
-        amlaft = ensure_asset_maintenance_lists_asset_failure_type(session, asset_id, failure_type_id)
-        if not amlaft:
-            job.status = JobStatus.not_found
-            job.error_message = "asset_maintenanace_list_asset_failure_type mapping not found"
-            session.commit()
-            return
+        for ftid in failure_type_ids:
+            amlaft = ensure_asset_maintenance_lists_asset_failure_type(session, asset_id, ftid)
+            if not amlaft:
+                job.status = JobStatus.not_found
+                job.error_message = f"asset_maintenanace_list_asset_failure_type mapping not found for failure_type_id {ftid}"
+                session.commit()
+                return
 
     # 4) Eta/Beta felkutatása (legutóbbi érték a window végéig)
     # eta_val, beta_val = get_latest_eta_beta(session, aft_id, end)
@@ -576,7 +597,7 @@ def process_job(session: Session, job: PredictionJob):
             maintenance_end_time=end,
             source_sys_time=source_time,
             operation_ids=operation_ids,
-            failure_type_ids=[failure_type_id],
+            failure_type_ids=failure_type_ids,
             # eta_value=eta_val,
             # beta_value=beta_val,
             # default_reliability=p.get("default_reliability"),

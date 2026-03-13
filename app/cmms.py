@@ -36,18 +36,17 @@ async def cmms_get_failures(failure_id: int) -> dict | None:
         return None
 
 
-async def cmms_get_failure_type(asset_id: int) -> dict | None:
-    url = f"{settings.CMMS_BASE_URL}/failure_type"
-    params = {"failure_type_id": asset_id}
+async def cmms_get_failure_type(failure_type_id: int) -> dict | None:
+    url = f"{settings.CMMS_BASE_URL}/failure_types/{failure_type_id}"
     try:
         async with httpx.AsyncClient(timeout=10.0, headers=_headers()) as client:
-            r = await client.get(url, params=params)
+            r = await client.get(url)
             if r.status_code == 404:
                 return None
             r.raise_for_status()
             return r.json()
     except httpx.HTTPError as e:
-        print(f"Error fetching failure type {asset_id}: {e}")
+        print(f"Error fetching failure type {failure_type_id}: {e}")
         return None
 
 
