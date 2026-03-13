@@ -3,7 +3,7 @@ from .settings import settings
 
 
 def _headers():
-    return {"Authorization": f"Bearer {settings.CMMS_TOKEN}"}
+    return {"x-api-key": settings.CMMS_TOKEN}
 
 
 async def cmms_get_asset(asset_id: int) -> dict | None:

@@ -86,15 +86,20 @@ def insert_prediction_row(session: Session, predicted_reliability: float, pred_t
 
 
 def ensure_asset(session: Session, asset_id: int) -> bool:
-    asset = session.get(Asset, asset_id)
-    if asset:
-        return True
-    # Ha nincs, megpróbáljuk CMMS-ből betölteni
     asset_json = asyncio.run(cmms_get_asset(asset_id))
     if not asset_json:
         return False
-    session.merge(Asset(asset_id=asset_json["asset_id"],
-                        asset_name=asset_json.get("asset_name", "")))
+
+    # ha listát ad vissza, keressük ki a megfelelő assetet
+    if isinstance(asset_json, list):
+        asset_json = next((a for a in asset_json if int(a.get("asset_id", -1)) == int(asset_id)), None)
+        if not asset_json:
+            return False
+
+    session.merge(Asset(
+        asset_id=asset_json["asset_id"],
+        asset_name=asset_json.get("asset_name", "")
+    ))
     session.commit()
     return True
 
