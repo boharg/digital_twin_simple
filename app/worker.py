@@ -26,6 +26,8 @@ from .cmms import (cmms_get_asset,
                    cmms_get_asset_failure_type_operations)
 from .schemas import AssetPredictIn, AssetFailureTypePredictIn
 
+from sqlalchemy import text
+
 
 POLL_INTERVAL_SEC = 1.0
 ALLOWED_OPERATION_TYPES = {"BOTH", "CORRECTIVE", "PREVENTIVE"}
@@ -500,6 +502,17 @@ def process_job(session: Session, job: PredictionJob):
     #    job.error_message = "No gamma data in time window for asset/failure_type"
     #    session.commit()
     #    return
+
+    for op_id in operation_ids:
+        session.execute(
+            text("""
+                INSERT INTO operation (operation_id, operation_name)
+                VALUES (:op_id, :op_name)
+                ON CONFLICT (operation_id) DO NOTHING
+            """),
+            {"op_id": int(op_id), "op_name": f"op-{op_id}"}
+        )
+    session.commit()
 
     any_oml = False
     for op_id in operation_ids:
