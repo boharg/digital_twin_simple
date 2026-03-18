@@ -16,17 +16,15 @@ from .models import (
 from .predict import predict, compute_prediction_future_time
 from .utils import atomic_write_json
 from .settings import settings
-from .cmms import (cmms_get_asset,
-                   cmms_get_maintenance_list,
-                   cmms_get_failure_type,
+from .cmms import (cmms_get_assets,
+                   cmms_get_maintenance_lists,
+                   cmms_get_failure_types,
                    cmms_post_asset_prediction_sync,
                    cmms_get_operation_maintenance_lists,
                    cmms_get_asset_maintenance_lists,
                    cmms_post_asset_failure_type_prediction_sync,
                    cmms_get_asset_failure_type_operations)
 from .schemas import AssetPredictIn, AssetFailureTypePredictIn
-
-from sqlalchemy import text
 
 
 POLL_INTERVAL_SEC = 1.0
@@ -88,20 +86,21 @@ def insert_prediction_row(session: Session, predicted_reliability: float, pred_t
 
 
 def ensure_asset(session: Session, asset_id: int) -> bool:
-    asset_json = asyncio.run(cmms_get_asset(asset_id))
+    asset_json = asyncio.run(cmms_get_assets(asset_id))
     if not asset_json:
         return False
 
-    # ha listát ad vissza, keressük ki a megfelelő assetet
     if isinstance(asset_json, list):
-        asset_json = next((a for a in asset_json if int(a.get("asset_id", -1)) == int(asset_id)), None)
-        if not asset_json:
-            return False
+        asset_json = next((a for a in asset_json if int(a.get("asset_id")) == int(asset_id)), None)
+
+    if not asset_json:
+        return False
 
     session.merge(Asset(
         asset_id=asset_json["asset_id"],
         asset_name=asset_json.get("asset_name", "")
     ))
+
     session.commit()
     return True
 
@@ -112,7 +111,7 @@ def ensure_failure_type(session: Session, failure_type_id: int | None) -> bool:
     ft = session.get(FailureType, failure_type_id)
     if ft:
         return True
-    ft_json = asyncio.run(cmms_get_failure_type(failure_type_id))
+    ft_json = asyncio.run(cmms_get_failure_types(failure_type_id))
     if not ft_json:
         return False
     session.merge(FailureType(
@@ -185,7 +184,7 @@ def ensure_maintenance_list_row(session: Session, maintenance_list_id: int) -> b
 
     ml_json = None
     try:
-        ml_json = asyncio.run(cmms_get_maintenance_list(maintenance_list_id))
+        ml_json = asyncio.run(cmms_get_maintenance_lists(maintenance_list_id))
     except Exception:
         pass
 
@@ -222,14 +221,18 @@ def ensure_operation_maintenanace_lists(session: Session, operation_id: int) -> 
         ml_ids.append(ml_id)
         # ensure maintenance_list row locally
         ensure_maintenance_list_row(session, ml_id)
-        # ensure operation -> maintenance_list mapping
-        session.merge(OperationsMaintenanceList(
-            maintenance_list_id=int(ml_id),
-            operation_id=op_id
-        ))
+        # ensure operation -> maintenance_list mapping (idempotent)
+        session.execute(
+            text("""
+                INSERT INTO operations_maintenance_list (maintenance_list_id, operation_id)
+                VALUES (:ml_id, :op_id)
+                ON CONFLICT DO NOTHING
+            """),
+            {"ml_id": int(ml_id), "op_id": int(op_id)}
+        )
     if ml_ids:
         session.flush()
-    return bool(ml_ids)
+    return ml_ids
 
 
 def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]:
@@ -290,10 +293,14 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]
                 ).limit(1)
             ).first()
             if not exists_oml:
-                session.add(OperationsMaintenanceList(
-                    maintenance_list_id=ml_id,
-                    operation_id=op_uuid
-                ))
+                session.execute(
+                    text("""
+                        INSERT INTO operations_maintenance_list (maintenance_list_id, operation_id)
+                        VALUES (:ml_id, :op_id)
+                        ON CONFLICT DO NOTHING
+                    """),
+                    {"ml_id": int(ml_id), "op_id": int(op_uuid)}
+                )
 
     session.flush()
 
@@ -587,7 +594,7 @@ def process_job(session: Session, job: PredictionJob):
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
         pred_id = insert_prediction_row(session=session, predicted_reliability=prediction["predicted_reliability"],
                                         pred_time=source_time, pred_future_time=prediction_future_time,)
-        out = {"prediction_id": pred_id, "predicted_reliability": prediction["predicted_reliability"]}
+        out = {"prediction_id": pred_id, "asset_id":  asset_id,"predicted_reliability": prediction["predicted_reliability"]}
 
         # JSON
         json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
@@ -595,8 +602,8 @@ def process_job(session: Session, job: PredictionJob):
 
         # CMMS POST (ha elbukik, itt nem retry-olunk automatikusan – log + status=error)
         try:
-            resp = cmms_post_asset_prediction_sync(out)
-            logger.info("CMMS asset_prediction response: {}", resp)  # pass resp as arg
+            resp = asyncio.run(cmms_post_asset_prediction_sync(out))
+            logger.info("CMMS asset_prediction response: {}", resp)
             if isinstance(resp, dict) and resp.get("error"):
                 raise RuntimeError(resp["error"])
         except Exception as e:
@@ -631,8 +638,8 @@ def process_job(session: Session, job: PredictionJob):
         atomic_write_json(json_path, out)
 
         try:
-            resp = cmms_post_asset_failure_type_prediction_sync(out)
-            logger.info(f"CMMS asset_prediction response: {resp}")  # was: "{resp}"
+            resp = asyncio.run(cmms_post_asset_failure_type_prediction_sync(out))
+            logger.info("CMMS asset_prediction response: {}", resp)
             if isinstance(resp, dict) and resp.get("error"):
                 raise RuntimeError(resp["error"])
         except Exception as e:
@@ -652,10 +659,19 @@ def main():
     logger.info("DB-queue worker started (no Redis).")
     while True:
         try:
+            # 1) Claim in a short-lived session/transaction
             with session_scope() as session:
                 job = claim_one_job(session)
+                job_id = job.job_id if job else None
+
+            if not job_id:
+                time.sleep(POLL_INTERVAL_SEC)
+                continue
+
+            # 2) Process in a separate session so DB txn isn't held during CMMS calls
+            with session_scope() as session:
+                job = session.get(PredictionJob, job_id)
                 if not job:
-                    time.sleep(POLL_INTERVAL_SEC)
                     continue
                 process_job(session, job)
         except Exception as e:
