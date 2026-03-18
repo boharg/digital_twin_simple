@@ -1,0 +1,193 @@
+{
+  "openapi": "3.0.2",
+  "info": {
+    "title": "Asset Prediction API (DB-queue, no Docker)",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/asset_predict": {
+      "post": {
+        "summary": "Queue an asset prediction job",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AssetPredictIn" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AssetPredictOut" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/asset_failure_type_predict": {
+      "post": {
+        "summary": "Queue an asset failure type prediction job",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AssetFailureTypePredictIn" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AssetFailureTypePredictOut" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workrequest": {
+      "post": {
+        "summary": "Queue a workrequest job (same schema as asset_failure_type_predict)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AssetFailureTypePredictIn" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AssetFailureTypePredictOut" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AssetPredictIn": {
+        "type": "object",
+        "required": [
+          "operation_ids",
+          "failure_start_time",
+          "maintenance_end_time",
+          "source_sys_time",
+          "asset_id"
+        ],
+        "properties": {
+          "operation_ids": {
+            "type": "array",
+            "items": { "type": "integer", "format": "int64" }
+          },
+          "failure_start_time": { "type": "string", "format": "date-time" },
+          "maintenance_end_time": { "type": "string", "format": "date-time" },
+          "source_sys_time": { "type": "string", "format": "date-time" },
+          "asset_id": { "type": "integer", "format": "int64" },
+          "default_reliability": {
+            "type": "array",
+            "items": { "type": "number", "format": "float" }
+          }
+        }
+      },
+      "AssetPredictOut": {
+        "type": "object",
+        "required": ["prediction_id"],
+        "properties": {
+          "prediction_id": { "type": "integer", "format": "int64" }
+        }
+      },
+      "AssetFailureTypePredictIn": {
+        "type": "object",
+        "required": [
+          "operation_ids",
+          "failure_start_time",
+          "maintenance_end_time",
+          "source_sys_time",
+          "asset_id",
+          "failure_type_ids"
+        ],
+        "properties": {
+          "operation_ids": {
+            "type": "array",
+            "items": { "type": "integer", "format": "int64" }
+          },
+          "failure_start_time": { "type": "string", "format": "date-time" },
+          "maintenance_end_time": { "type": "string", "format": "date-time" },
+          "source_sys_time": { "type": "string", "format": "date-time" },
+          "asset_id": { "type": "integer", "format": "int64" },
+          "failure_type_ids": {
+            "type": "array",
+            "items": { "type": "integer", "format": "int64" }
+          },
+          "default_reliability": {
+            "type": "array",
+            "items": { "type": "number", "format": "float" }
+          }
+        }
+      },
+      "AssetFailureTypePredictOut": {
+        "type": "object",
+        "required": ["prediction_id"],
+        "properties": {
+          "prediction_id": { "type": "integer", "format": "int64" }
+        }
+      },
+      "CmmsAssetFailureType": {
+        "type": "object",
+        "required": ["asset_id", "failure_type_id", "asset_failure_type_id"],
+        "properties": {
+          "asset_id": { "type": "integer", "format": "int64" },
+          "failure_type_id": { "type": "integer", "format": "int64" },
+          "criticality": { "type": "integer" },
+          "asset_failure_type_id": { "type": "integer", "format": "int64" }
+        },
+        "description": "CMMS GET /asset_failure_types or /asset_failure_types/{asset_id} response item"
+      },
+      "CmmsAssetFailureTypesResponse": {
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/CmmsAssetFailureType" },
+        "description": "CMMS asset_failure_types list"
+      },
+      "CmmsAssetFailureTypesOperations": {
+        "type": "object",
+        "required": ["asset_id", "failure_type_id", "operations"],
+        "properties": {
+          "asset_id": { "type": "integer", "format": "int64" },
+          "failure_type_id": { "type": "integer", "format": "int64" },
+          "operations": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CmmsOperation" }
+          }
+        },
+        "description": "CMMS GET /asset_failure_types_operations response item"
+      },
+      "CmmsOperation": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "operation_id": { "type": "integer", "format": "int64" },
+          "opareation_id": { "type": "integer", "format": "int64" },
+          "type": { "type": "string", "enum": ["BOTH", "CORRECTIVE", "PREVENTIVE"] }
+        },
+        "description": "CMMS operation item (note: operation_id sometimes comes as 'opareation_id')"
+      },
+      "CmmsAssetFailureTypesOperationsResponse": {
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/CmmsAssetFailureTypesOperations" },
+        "description": "CMMS asset_failure_types_operations list"
+      }
+    }
+  }
+}
