@@ -23,7 +23,7 @@ def _log_done(method: str, url: str, status_code: int, content_type: str | None 
         logger.info("CMMS {} {} -> {}", method, url, status_code)
 
 
-async def cmms_get_asset(asset_id: int) -> dict | None:
+async def cmms_get_assets(asset_id: int) -> dict | None:
     url = f"{settings.CMMS_BASE_URL}/assets"
     params = {"asset_id": asset_id}
     try:
@@ -57,7 +57,7 @@ async def cmms_get_failures(failure_id: int) -> dict | None:
         return None
 
 
-async def cmms_get_failure_type(failure_type_id: int) -> dict | None:
+async def cmms_get_failure_types(failure_type_id: int) -> dict | None:
     url = f"{settings.CMMS_BASE_URL}/failure_types/{failure_type_id}"
     try:
         _log_start("GET", url)
@@ -73,8 +73,8 @@ async def cmms_get_failure_type(failure_type_id: int) -> dict | None:
         return None
 
 
-async def cmms_get_maintenance_list(maintenance_list_id: int) -> dict | None:
-    url = f"{settings.CMMS_BASE_URL}/maintenance_list"
+async def cmms_get_maintenance_lists(maintenance_list_id: int) -> dict | None:
+    url = f"{settings.CMMS_BASE_URL}/maintenance_lists"
     params = {"maintenance_list_id": maintenance_list_id}
     try:
         _log_start("GET", url, params)
