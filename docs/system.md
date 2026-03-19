@@ -1,7 +1,7 @@
 # System Operation Overview
 
 This document describes the current runtime behavior of the system and the main data flows.
-It complements `docs/mukodes.md` and `docs/operations.md` and reflects the latest logic.
+It complements `docs/mukodes.md` and `docs/operations.md`.
 
 ## Components
 
@@ -19,7 +19,7 @@ It complements `docs/mukodes.md` and `docs/operations.md` and reflects the lates
 2. API validates payload and writes a job into `prediction_jobs` with status `queued`.
 3. Worker polls the DB, claims a job (`FOR UPDATE SKIP LOCKED`), marks it `processing`.
 4. Worker prepares data by loading missing entities from CMMS and DB.
-5. Worker runs prediction logic, stores results, posts to CMMS, and marks the job `done` or `error`.
+5. Worker runs prediction logic, stores results, posts to CMMS, and marks the job `done`, `not_found`, or `error`.
 
 ## Queue and Job Lifecycle
 
@@ -65,19 +65,24 @@ Worker steps:
 
 ### POST `/workrequest`
 
-Currently behaves the same as `/asset_failure_type_predict` and queues a job with the same input schema.
+Current implementation uses the same input schema as `/asset_failure_type_predict`, but has known gaps:
+
+- Job insert does not set `endpoint_type`, which is required by the model.
+- Worker has no explicit branch for `workrequest` processing.
 
 ## CMMS Integration
 
 ### CMMS GET calls
 
 - `/assets?asset_id=...`
+- `/failures?failure_id=...`
 - `/failure_types/{failure_type_id}`
-- `/maintenance_list?maintenance_list_id=...`
+- `/maintenance_lists?maintenance_list_id=...`
 - `/operation_maintenance_lists?operation_id=...`
 - `/asset_maintenance_lists?asset_id=...`
 - `/asset_failure_types` or `/asset_failure_types/{asset_id}`
 - `/asset_failure_types_operations?asset_id=...&failure_type_id=...`
+- `/asset_failure_type_asset_maintenance_lists?asset_id=...&failure_type=...&default_reliability=...`
 
 ### CMMS POST calls
 
@@ -100,3 +105,4 @@ Timeouts and response content-type are logged.
 - CMMS provides `asset_failure_type_id`; DB is configured to allow inserting it explicitly.
 - `failure_type_ids` are provided by the API input.
 - `asset_failure_type_ids` are derived from CMMS and used in CMMS POST payloads.
+- Current code uses integer IDs in API payloads and DB mappings.

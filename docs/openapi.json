@@ -2,28 +2,45 @@
   "openapi": "3.0.2",
   "info": {
     "title": "Asset Prediction API (DB-queue, no Docker)",
-    "version": "1.0.0"
+    "version": "1.1.0",
+    "description": "Current API contract based on app/main.py and app/schemas.py.\nAll request IDs are integers (int64)."
   },
   "paths": {
     "/asset_predict": {
       "post": {
         "summary": "Queue an asset prediction job",
+        "operationId": "assetPredict",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/AssetPredictIn" }
+              "schema": {
+                "$ref": "#/components/schemas/AssetPredictIn"
+              },
+              "example": {
+                "operation_ids": [1001, 1002],
+                "failure_start_time": "2026-03-10T08:00:00Z",
+                "maintenance_end_time": "2026-03-12T10:00:00Z",
+                "source_sys_time": "2026-03-12T10:05:00Z",
+                "asset_id": 501,
+                "default_reliability": [0.9]
+              }
             }
           }
         },
         "responses": {
           "202": {
-            "description": "Queued",
+            "description": "Queued (or idempotent existing job)",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/AssetPredictOut" }
+                "schema": {
+                  "$ref": "#/components/schemas/AssetPredictOut"
+                }
               }
             }
+          },
+          "422": {
+            "description": "Validation error"
           }
         }
       }
@@ -31,45 +48,74 @@
     "/asset_failure_type_predict": {
       "post": {
         "summary": "Queue an asset failure type prediction job",
+        "operationId": "assetFailureTypePredict",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/AssetFailureTypePredictIn" }
+              "schema": {
+                "$ref": "#/components/schemas/AssetFailureTypePredictIn"
+              },
+              "example": {
+                "operation_ids": [1001],
+                "failure_start_time": "2026-03-10T08:00:00Z",
+                "maintenance_end_time": "2026-03-12T10:00:00Z",
+                "source_sys_time": "2026-03-12T10:05:00Z",
+                "asset_id": 501,
+                "failure_type_ids": [11, 12],
+                "default_reliability": [0.9]
+              }
             }
           }
         },
         "responses": {
           "202": {
-            "description": "Queued",
+            "description": "Queued (or idempotent existing job)",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/AssetFailureTypePredictOut" }
+                "schema": {
+                  "$ref": "#/components/schemas/AssetFailureTypePredictOut"
+                }
               }
             }
+          },
+          "422": {
+            "description": "Validation error"
           }
         }
       }
     },
     "/workrequest": {
       "post": {
-        "summary": "Queue a workrequest job (same schema as asset_failure_type_predict)",
+        "summary": "Queue a workrequest-like job",
+        "description": "Uses the same request schema as /asset_failure_type_predict. Current implementation has known gaps: endpoint_type is not set on enqueue and there is no dedicated worker branch for workrequest processing.",
+        "operationId": "workrequest",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/AssetFailureTypePredictIn" }
+              "schema": {
+                "$ref": "#/components/schemas/AssetFailureTypePredictIn"
+              }
             }
           }
         },
         "responses": {
           "202": {
-            "description": "Queued",
+            "description": "Queued (intended behavior)",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/AssetFailureTypePredictOut" }
+                "schema": {
+                  "$ref": "#/components/schemas/AssetFailureTypePredictOut"
+                }
               }
             }
+          },
+          "500": {
+            "description": "Server error (possible with current implementation)"
+          },
+          "422": {
+            "description": "Validation error"
           }
         }
       }
@@ -89,23 +135,46 @@
         "properties": {
           "operation_ids": {
             "type": "array",
-            "items": { "type": "integer", "format": "int64" }
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
           },
-          "failure_start_time": { "type": "string", "format": "date-time" },
-          "maintenance_end_time": { "type": "string", "format": "date-time" },
-          "source_sys_time": { "type": "string", "format": "date-time" },
-          "asset_id": { "type": "integer", "format": "int64" },
+          "failure_start_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "maintenance_end_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source_sys_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "asset_id": {
+            "type": "integer",
+            "format": "int64"
+          },
           "default_reliability": {
             "type": "array",
-            "items": { "type": "number", "format": "float" }
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
           }
         }
       },
       "AssetPredictOut": {
         "type": "object",
-        "required": ["prediction_id"],
+        "required": [
+          "prediction_id"
+        ],
         "properties": {
-          "prediction_id": { "type": "integer", "format": "int64" }
+          "prediction_id": {
+            "type": "integer",
+            "format": "int64"
+          }
         }
       },
       "AssetFailureTypePredictIn": {
@@ -121,71 +190,144 @@
         "properties": {
           "operation_ids": {
             "type": "array",
-            "items": { "type": "integer", "format": "int64" }
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
           },
-          "failure_start_time": { "type": "string", "format": "date-time" },
-          "maintenance_end_time": { "type": "string", "format": "date-time" },
-          "source_sys_time": { "type": "string", "format": "date-time" },
-          "asset_id": { "type": "integer", "format": "int64" },
+          "failure_start_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "maintenance_end_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source_sys_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "asset_id": {
+            "type": "integer",
+            "format": "int64"
+          },
           "failure_type_ids": {
             "type": "array",
-            "items": { "type": "integer", "format": "int64" }
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
           },
           "default_reliability": {
             "type": "array",
-            "items": { "type": "number", "format": "float" }
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
           }
         }
       },
       "AssetFailureTypePredictOut": {
         "type": "object",
-        "required": ["prediction_id"],
+        "required": [
+          "prediction_id"
+        ],
         "properties": {
-          "prediction_id": { "type": "integer", "format": "int64" }
+          "prediction_id": {
+            "type": "integer",
+            "format": "int64"
+          }
         }
       },
       "CmmsAssetFailureType": {
         "type": "object",
-        "required": ["asset_id", "failure_type_id", "asset_failure_type_id"],
+        "required": [
+          "asset_id",
+          "failure_type_id",
+          "asset_failure_type_id"
+        ],
         "properties": {
-          "asset_id": { "type": "integer", "format": "int64" },
-          "failure_type_id": { "type": "integer", "format": "int64" },
-          "criticality": { "type": "integer" },
-          "asset_failure_type_id": { "type": "integer", "format": "int64" }
+          "asset_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failure_type_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "criticality": {
+            "type": "number",
+            "format": "float"
+          },
+          "asset_failure_type_id": {
+            "type": "integer",
+            "format": "int64"
+          }
         },
         "description": "CMMS GET /asset_failure_types or /asset_failure_types/{asset_id} response item"
       },
       "CmmsAssetFailureTypesResponse": {
         "type": "array",
-        "items": { "$ref": "#/components/schemas/CmmsAssetFailureType" },
+        "items": {
+          "$ref": "#/components/schemas/CmmsAssetFailureType"
+        },
         "description": "CMMS asset_failure_types list"
       },
       "CmmsAssetFailureTypesOperations": {
         "type": "object",
-        "required": ["asset_id", "failure_type_id", "operations"],
+        "required": [
+          "asset_id",
+          "failure_type_id",
+          "operations"
+        ],
         "properties": {
-          "asset_id": { "type": "integer", "format": "int64" },
-          "failure_type_id": { "type": "integer", "format": "int64" },
+          "asset_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failure_type_id": {
+            "type": "integer",
+            "format": "int64"
+          },
           "operations": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/CmmsOperation" }
+            "items": {
+              "$ref": "#/components/schemas/CmmsOperation"
+            }
           }
         },
         "description": "CMMS GET /asset_failure_types_operations response item"
       },
       "CmmsOperation": {
         "type": "object",
-        "required": ["type"],
+        "required": [
+          "type"
+        ],
         "properties": {
-          "operation_id": { "type": "integer", "format": "int64" },
-          "opareation_id": { "type": "integer", "format": "int64" },
-          "type": { "type": "string", "enum": ["BOTH", "CORRECTIVE", "PREVENTIVE"] }
+          "operation_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "opareation_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "BOTH",
+              "CORRECTIVE",
+              "PREVENTIVE"
+            ]
+          }
         },
-        "description": "CMMS operation item (note: operation_id sometimes comes as 'opareation_id')"
+        "description": "CMMS operation item (operation_id sometimes comes as 'opareation_id')."
       },
       "CmmsAssetFailureTypesOperationsResponse": {
         "type": "array",
-        "items": { "$ref": "#/components/schemas/CmmsAssetFailureTypesOperations" },
+        "items": {
+          "$ref": "#/components/schemas/CmmsAssetFailureTypesOperations"
+        },
         "description": "CMMS asset_failure_types_operations list"
       }
     }
