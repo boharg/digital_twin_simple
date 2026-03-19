@@ -37,7 +37,7 @@ def predict(
         target_sum = random.random()
 
         failure_type_probability = [target_sum * (r / raw_sum) for r in raw]
-        predicted_reliability = 1.0 - sum(failure_type_probability)
+        predicted_reliability = 1.0 - sum(failure_type_probability) - 0.01
 
         return {"failure_type_ids": failure_type_ids, "failure_type_probability": failure_type_probability, "predicted_reliability": predicted_reliability}
 

@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from sqlalchemy import text, select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
 from loguru import logger
 from pydantic import ValidationError
 
@@ -30,6 +31,23 @@ from .schemas import AssetPredictIn, AssetFailureTypePredictIn
 
 POLL_INTERVAL_SEC = 1.0
 ALLOWED_OPERATION_TYPES = {"BOTH", "CORRECTIVE", "PREVENTIVE"}
+STUCK_JOB_MAX_AGE_SEC = 120
+RETRY_LIMIT = 5
+
+
+def _is_admin_shutdown_error(exc: Exception) -> bool:
+    return "terminating connection due to administrator command" in str(exc)
+
+
+def _commit_before_cmms(session: Session):
+    """
+    Avoid holding open DB transactions while waiting on CMMS/network calls.
+    """
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 @contextmanager
@@ -43,6 +61,33 @@ def session_scope():
         raise
     finally:
         session.close()
+
+
+def requeue_stuck_jobs(session: Session):
+    session.execute(
+        text("""
+        UPDATE prediction_jobs
+        SET status = 'queued',
+            updated_at = NOW()
+        WHERE status = 'processing'
+          AND updated_at < NOW() - (INTERVAL '1 second' * :max_age)
+          AND retry_count < :retry_limit
+        """),
+        {"max_age": STUCK_JOB_MAX_AGE_SEC, "retry_limit": RETRY_LIMIT}
+    )
+    session.execute(
+        text("""
+        UPDATE prediction_jobs
+        SET status = 'error',
+            error_message = 'Retry limit exceeded',
+            updated_at = NOW()
+        WHERE status = 'processing'
+          AND updated_at < NOW() - (INTERVAL '1 second' * :max_age)
+          AND retry_count >= :retry_limit
+        """),
+        {"max_age": STUCK_JOB_MAX_AGE_SEC, "retry_limit": RETRY_LIMIT}
+    )
+    session.commit()
 
 
 def claim_one_job(session: Session) -> PredictionJob | None:
@@ -68,7 +113,8 @@ def claim_one_job(session: Session) -> PredictionJob | None:
 def insert_prediction_row(session: Session, predicted_reliability: float, pred_time: datetime,
                           pred_future_time: datetime, aft_id: int | None = None, prediction_id: int | None = None) -> int:
 
-    pr = max(0.0, min(1.0, float(predicted_reliability)))
+    # CMMS expects predicted_reliability <= 0.99
+    pr = max(0.0, min(0.99, float(predicted_reliability)))
 
     pred = Prediction(
         predicted_reliability=pr,
@@ -89,9 +135,12 @@ def insert_prediction_row(session: Session, predicted_reliability: float, pred_t
 def ensure_asset(session: Session, asset_id: int) -> bool:
     asset = session.get(Asset, asset_id)
     if asset:
+        # Close read-only transaction to avoid idle-in-transaction
+        session.commit()
         return True
     # Ha nincs, megpróbáljuk CMMS-ből betölteni
-    asset_json = asyncio.run(cmms_get_asset(asset_id))
+    _commit_before_cmms(session)
+    asset_json = asyncio.run(cmms_get_assets(asset_id))
     if not asset_json:
         return False
     if isinstance(asset_json, list):
@@ -112,7 +161,10 @@ def ensure_failure_type(session: Session, failure_type_id: int | None) -> bool:
         return False
     ft = session.get(FailureType, failure_type_id)
     if ft:
+        # Close read-only transaction to avoid idle-in-transaction
+        session.commit()
         return True
+    _commit_before_cmms(session)
     ft_json = asyncio.run(cmms_get_failure_types(failure_type_id))
     if not ft_json:
         return False
@@ -182,13 +234,23 @@ def ensure_maintenance_list_row(session: Session, maintenance_list_id: int) -> b
     ml_id = maintenance_list_id
     ml = session.get(MaintenanceList, ml_id)
     if ml:
+        # Close the read-only transaction to avoid idle-in-transaction
+        session.commit()
         return True
 
     ml_json = None
     try:
+        _commit_before_cmms(session)
         ml_json = asyncio.run(cmms_get_maintenance_lists(maintenance_list_id))
     except Exception:
         pass
+
+    # CMMS may return a list; pick the matching item if so
+    if isinstance(ml_json, list):
+        ml_json = next(
+            (r for r in ml_json if int(r.get("maintenance_list_id", -1)) == int(ml_id)),
+            None,
+        )
 
     session.add(MaintenanceList(
         maintenance_list_id=ml_id,
@@ -211,6 +273,7 @@ def ensure_operation_maintenanace_lists(session: Session, operation_id: int) -> 
     # 2) Fallback to CMMS
     rows = []
     try:
+        _commit_before_cmms(session)
         rows = asyncio.run(cmms_get_operation_maintenance_lists(operation_id)) or []
     except Exception:
         rows = []
@@ -223,15 +286,6 @@ def ensure_operation_maintenanace_lists(session: Session, operation_id: int) -> 
         ml_ids.append(ml_id)
         # ensure maintenance_list row locally
         ensure_maintenance_list_row(session, ml_id)
-        # ensure operation -> maintenance_list mapping (idempotent)
-        session.execute(
-            text("""
-                INSERT INTO operations_maintenance_list (maintenance_list_id, operation_id)
-                VALUES (:ml_id, :op_id)
-                ON CONFLICT DO NOTHING
-            """),
-            {"ml_id": int(ml_id), "op_id": int(op_id)}
-        )
         # ensure operation -> maintenance_list mapping (idempotent)
         session.execute(
             text("""
@@ -267,6 +321,7 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]
     # 2) Fallback to CMMS
     rows: list[dict] = []
     try:
+        _commit_before_cmms(session)
         rows = asyncio.run(cmms_get_asset_maintenance_lists(asset_id)) or []
     except Exception:
         rows = []
@@ -304,14 +359,6 @@ def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[str]
                 ).limit(1)
             ).first()
             if not exists_oml:
-                session.execute(
-                    text("""
-                        INSERT INTO operations_maintenance_list (maintenance_list_id, operation_id)
-                        VALUES (:ml_id, :op_id)
-                        ON CONFLICT DO NOTHING
-                    """),
-                    {"ml_id": int(ml_id), "op_id": int(op_uuid)}
-                )
                 session.execute(
                     text("""
                         INSERT INTO operations_maintenance_list (maintenance_list_id, operation_id)
@@ -482,6 +529,13 @@ def process_job(session: Session, job: PredictionJob):
 
     asset_id = int(p.asset_id)
 
+    # Ensure asset exists before any dependent inserts to avoid FK violations
+    if not ensure_asset(session, asset_id):
+        job.status = JobStatus.not_found
+        job.error_message = "Asset not found in DB/CMMS"
+        session.commit()
+        return
+
     # ---- failure_type_ids normalizálás ----
     ft_raw = getattr(p, "failure_type_ids", None)
     if ft_raw is None:
@@ -501,6 +555,7 @@ def process_job(session: Session, job: PredictionJob):
 
         rows = []
         try:
+            _commit_before_cmms(session)
             rows = asyncio.run(cmms_get_asset_failure_types(asset_id)) or []
         except Exception:
             rows = []
@@ -517,6 +572,12 @@ def process_job(session: Session, job: PredictionJob):
             r_asset = r.get("asset_id")
             if r_asset is None or int(r_asset) != int(asset_id):
                 continue
+            # Ensure asset exists locally to avoid FK violations on asset_failure_type insert
+            if not ensure_asset(session, int(r_asset)):
+                job.status = JobStatus.not_found
+                job.error_message = f"Asset not found in DB/CMMS: {r_asset}"
+                session.commit()
+                return
             aft_id = r.get("asset_failure_type_id")
             ft_id = r.get("failure_type_id")
             if aft_id is None or ft_id is None:
@@ -559,13 +620,6 @@ def process_job(session: Session, job: PredictionJob):
 
     op_raw = p.operation_ids
     operation_ids: list[int] = [x for x in (op_raw if isinstance(op_raw, (list, tuple)) else [op_raw])]
-
-    # 1) Ensure data exists
-    if not ensure_asset(session, asset_id):
-        job.status = JobStatus.not_found
-        job.error_message = "Asset not found in DB/CMMS"
-        session.commit()
-        return
 
     if job.endpoint_type == "asset_failure_type_predict":
         for ftid in failure_type_ids:
@@ -654,9 +708,10 @@ def process_job(session: Session, job: PredictionJob):
         )
         print(prediction)
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
-        pred_id = insert_prediction_row(session=session, predicted_reliability=prediction["predicted_reliability"],
+        pr = max(0.0, min(0.99, float(prediction["predicted_reliability"])))
+        pred_id = insert_prediction_row(session=session, predicted_reliability=pr,
                                         pred_time=source_time, pred_future_time=prediction_future_time,)
-        out = {"prediction_id": pred_id, "asset_id":  asset_id,"predicted_reliability": prediction["predicted_reliability"]}
+        out = {"prediction_id": pred_id, "asset_id": asset_id, "predicted_reliability": pr}
 
         # JSON
         json_path = os.path.join(settings.DATA_DIR, f"{pred_id}.json")
@@ -664,8 +719,6 @@ def process_job(session: Session, job: PredictionJob):
 
         # CMMS POST (ha elbukik, itt nem retry-olunk automatikusan – log + status=error)
         try:
-            resp = asyncio.run(cmms_post_asset_prediction_sync(out))
-            logger.info("CMMS asset_prediction response: {}", resp)
             resp = asyncio.run(cmms_post_asset_prediction_sync(out))
             logger.info("CMMS asset_prediction response: {}", resp)
             if isinstance(resp, dict) and resp.get("error"):
@@ -693,7 +746,8 @@ def process_job(session: Session, job: PredictionJob):
         )
 
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
-        pred_id = insert_prediction_row(session=session, aft_id=aft_id, predicted_reliability=prediction["predicted_reliability"],
+        pr = max(0.0, min(0.99, float(prediction["predicted_reliability"])))
+        pred_id = insert_prediction_row(session=session, aft_id=aft_id, predicted_reliability=pr,
                                         pred_time=source_time, pred_future_time=prediction_future_time,)
         out = {
             "prediction_id": pred_id,
@@ -706,8 +760,6 @@ def process_job(session: Session, job: PredictionJob):
         atomic_write_json(json_path, out)
 
         try:
-            resp = asyncio.run(cmms_post_asset_failure_type_prediction_sync(out))
-            logger.info("CMMS asset_prediction response: {}", resp)
             resp = asyncio.run(cmms_post_asset_failure_type_prediction_sync(out))
             logger.info("CMMS asset_prediction response: {}", resp)
             if isinstance(resp, dict) and resp.get("error"):
@@ -727,9 +779,15 @@ def process_job(session: Session, job: PredictionJob):
 
 def main():
     logger.info("DB-queue worker started (no Redis).")
+    last_requeue = 0.0
     while True:
         try:
-            # 1) Claim in a short-lived session/transaction
+            now = time.monotonic()
+            if now - last_requeue >= 30.0:
+                with session_scope() as session:
+                    requeue_stuck_jobs(session)
+                last_requeue = now
+
             # 1) Claim in a short-lived session/transaction
             with session_scope() as session:
                 job = claim_one_job(session)
@@ -742,18 +800,27 @@ def main():
             # 2) Process in a separate session so DB txn isn't held during CMMS calls
             with session_scope() as session:
                 job = session.get(PredictionJob, job_id)
-                job_id = job.job_id if job else None
-
-            if not job_id:
-                time.sleep(POLL_INTERVAL_SEC)
-                continue
-
-            # 2) Process in a separate session so DB txn isn't held during CMMS calls
-            with session_scope() as session:
-                job = session.get(PredictionJob, job_id)
                 if not job:
                     continue
-                process_job(session, job)
+                try:
+                    process_job(session, job)
+                except Exception as e:
+                    logger.exception("Process job error: {}", e)
+                    # Mark job for retry or failure in a fresh session to avoid broken txn
+                    with session_scope() as session2:
+                        job2 = session2.get(PredictionJob, job_id)
+                        if job2:
+                            if _is_admin_shutdown_error(e):
+                                job2.retry_count = (job2.retry_count or 0) + 1
+                                if job2.retry_count >= RETRY_LIMIT:
+                                    job2.status = JobStatus.error
+                                    job2.error_message = "Retry limit exceeded"
+                                else:
+                                    job2.status = JobStatus.queued
+                                    job2.error_message = "Retry: DB connection terminated"
+                            else:
+                                job2.status = JobStatus.error
+                                job2.error_message = f"Unhandled error: {e}"
         except Exception as e:
             logger.exception(f"Worker loop error: {e}")
             time.sleep(POLL_INTERVAL_SEC)

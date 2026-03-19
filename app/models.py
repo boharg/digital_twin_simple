@@ -32,6 +32,7 @@ class PredictionJob(Base):
     endpoint_type: Mapped[str] = mapped_column(String, nullable=False)  # pl. "asset_predict" vagy "asset_failure_type_predict" # ! db frissítése szükséges
     prediction_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text)
+    retry_count: Mapped[int] = mapped_column(default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

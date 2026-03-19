@@ -167,7 +167,11 @@ async def cmms_post_asset_prediction_sync(payload: dict):
         with httpx.Client(timeout=_timeout(), headers=_headers()) as client:
             r = client.post(url, json=payload)
             _log_done("POST", url, r.status_code, r.headers.get("content-type"))
-            r.raise_for_status()
+            if r.status_code >= 400:
+                return {
+                    "error": f"HTTP {r.status_code}",
+                    "body": r.text,
+                }
             return r.json() if "application/json" in r.headers.get("content-type", "") else {"status": r.status_code}
     except httpx.HTTPError as e:
         logger.error("Error posting asset prediction: {}", e)
@@ -181,7 +185,11 @@ async def cmms_post_asset_failure_type_prediction_sync(payload: dict):
         with httpx.Client(timeout=_timeout(), headers=_headers()) as client:
             r = client.post(url, json=payload)
             _log_done("POST", url, r.status_code, r.headers.get("content-type"))
-            r.raise_for_status()
+            if r.status_code >= 400:
+                return {
+                    "error": f"HTTP {r.status_code}",
+                    "body": r.text,
+                }
             return r.json() if "application/json" in r.headers.get("content-type", "") else {"status": r.status_code}
     except httpx.HTTPError as e:
         logger.error("Error posting asset failure type prediction: {}", e)
