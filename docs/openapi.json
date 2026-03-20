@@ -1,335 +1,566 @@
-{
-  "openapi": "3.0.2",
-  "info": {
-    "title": "Asset Prediction API (DB-queue, no Docker)",
-    "version": "1.1.0",
-    "description": "Current API contract based on app/main.py and app/schemas.py.\nAll request IDs are integers (int64)."
-  },
-  "paths": {
-    "/asset_predict": {
-      "post": {
-        "summary": "Queue an asset prediction job",
-        "operationId": "assetPredict",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AssetPredictIn"
+﻿{
+    "openapi":  "3.0.2",
+    "info":  {
+                 "title":  "Asset/Asset Failure Type Prediction API with CMMS GET calls",
+                 "version":  "1.1.0",
+                 "description":  "Current API contract based on app/main.py and app/schemas.py.\nAll request IDs are integers (int64)."
+             },
+    "paths":  {
+                  "/asset_predict":  {
+                                         "post":  {
+                                                      "summary":  "Queue an asset prediction job",
+                                                      "operationId":  "assetPredict",
+                                                      "requestBody":  {
+                                                                          "required":  true,
+                                                                          "content":  {
+                                                                                          "application/json":  {
+                                                                                                                   "schema":  {
+                                                                                                                                  "$ref":  "#/components/schemas/AssetPredictIn"
+                                                                                                                              },
+                                                                                                                   "example":  {
+                                                                                                                                   "operation_ids":  [
+                                                                                                                                                         1001,
+                                                                                                                                                         1002
+                                                                                                                                                     ],
+                                                                                                                                   "failure_start_time":  "2026-03-10T08:00:00Z",
+                                                                                                                                   "maintenance_end_time":  "2026-03-12T10:00:00Z",
+                                                                                                                                   "source_sys_time":  "2026-03-12T10:05:00Z",
+                                                                                                                                   "asset_id":  501,
+                                                                                                                                   "default_reliability":  [
+                                                                                                                                                               0.9
+                                                                                                                                                           ]
+                                                                                                                               }
+                                                                                                               }
+                                                                                      }
+                                                                      },
+                                                      "responses":  {
+                                                                        "202":  {
+                                                                                    "description":  "Queued (or idempotent existing job)",
+                                                                                    "content":  {
+                                                                                                    "application/json":  {
+                                                                                                                             "schema":  {
+                                                                                                                                            "$ref":  "#/components/schemas/AssetPredictOut"
+                                                                                                                                        }
+                                                                                                                         }
+                                                                                                }
+                                                                                },
+                                                                        "422":  {
+                                                                                    "description":  "Validation error"
+                                                                                }
+                                                                    }
+                                                  }
+                                     },
+                  "/asset_failure_type_predict":  {
+                                                      "post":  {
+                                                                   "summary":  "Queue an asset failure type prediction job",
+                                                                   "operationId":  "assetFailureTypePredict",
+                                                                   "requestBody":  {
+                                                                                       "required":  true,
+                                                                                       "content":  {
+                                                                                                       "application/json":  {
+                                                                                                                                "schema":  {
+                                                                                                                                               "$ref":  "#/components/schemas/AssetFailureTypePredictIn"
+                                                                                                                                           },
+                                                                                                                                "example":  {
+                                                                                                                                                "operation_ids":  [
+                                                                                                                                                                      1001
+                                                                                                                                                                  ],
+                                                                                                                                                "failure_start_time":  "2026-03-10T08:00:00Z",
+                                                                                                                                                "maintenance_end_time":  "2026-03-12T10:00:00Z",
+                                                                                                                                                "source_sys_time":  "2026-03-12T10:05:00Z",
+                                                                                                                                                "asset_id":  501,
+                                                                                                                                                "failure_type_ids":  [
+                                                                                                                                                                         11,
+                                                                                                                                                                         12
+                                                                                                                                                                     ],
+                                                                                                                                                "default_reliability":  [
+                                                                                                                                                                            0.9
+                                                                                                                                                                        ]
+                                                                                                                                            }
+                                                                                                                            }
+                                                                                                   }
+                                                                                   },
+                                                                   "responses":  {
+                                                                                     "202":  {
+                                                                                                 "description":  "Queued (or idempotent existing job)",
+                                                                                                 "content":  {
+                                                                                                                 "application/json":  {
+                                                                                                                                          "schema":  {
+                                                                                                                                                         "$ref":  "#/components/schemas/AssetFailureTypePredictOut"
+                                                                                                                                                     }
+                                                                                                                                      }
+                                                                                                             }
+                                                                                             },
+                                                                                     "422":  {
+                                                                                                 "description":  "Validation error"
+                                                                                             }
+                                                                                 }
+                                                               }
+                                                  },
+                  "/assets":  {
+                                  "get":  {
+                                              "summary":  "CMMS: Get asset by asset_id",
+                                              "x-internal":  true,
+                                              "description":  "Internal CMMS call.",
+                                              "parameters":  [
+                                                                 {
+                                                                     "name":  "asset_id",
+                                                                     "in":  "query",
+                                                                     "schema":  {
+                                                                                    "type":  "integer",
+                                                                                    "format":  "int64"
+                                                                                },
+                                                                     "required":  true
+                                                                 }
+                                                             ],
+                                              "responses":  {
+                                                                "200":  {
+                                                                            "description":  "OK"
+                                                                        },
+                                                                "404":  {
+                                                                            "description":  "Not found"
+                                                                        }
+                                                            }
+                                          }
+                              },
+                  "/failures":  {
+                                    "get":  {
+                                                "summary":  "CMMS: Get failure by failure_id",
+                                                "x-internal":  true,
+                                                "description":  "Internal CMMS call.",
+                                                "parameters":  [
+                                                                   {
+                                                                       "name":  "failure_id",
+                                                                       "in":  "query",
+                                                                       "schema":  {
+                                                                                      "type":  "integer",
+                                                                                      "format":  "int64"
+                                                                                  },
+                                                                       "required":  true
+                                                                   }
+                                                               ],
+                                                "responses":  {
+                                                                  "200":  {
+                                                                              "description":  "OK"
+                                                                          },
+                                                                  "404":  {
+                                                                              "description":  "Not found"
+                                                                          }
+                                                              }
+                                            }
+                                },
+                  "/failure_types/{failure_type_id}":  {
+                                                           "get":  {
+                                                                       "summary":  "CMMS: Get failure type",
+                                                                       "x-internal":  true,
+                                                                       "parameters":  [
+                                                                                          {
+                                                                                              "name":  "failure_type_id",
+                                                                                              "in":  "path",
+                                                                                              "schema":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int64"
+                                                                                                         },
+                                                                                              "required":  true
+                                                                                          }
+                                                                                      ],
+                                                                       "responses":  {
+                                                                                         "200":  {
+                                                                                                     "description":  "OK"
+                                                                                                 },
+                                                                                         "404":  {
+                                                                                                     "description":  "Not found"
+                                                                                                 }
+                                                                                     }
+                                                                   }
+                                                       },
+                  "/maintenance_lists":  {
+                                             "get":  {
+                                                         "summary":  "CMMS: Get maintenance list",
+                                                         "x-internal":  true,
+                                                         "parameters":  [
+                                                                            {
+                                                                                "name":  "maintenance_list_id",
+                                                                                "in":  "query",
+                                                                                "schema":  {
+                                                                                               "type":  "integer",
+                                                                                               "format":  "int64"
+                                                                                           },
+                                                                                "required":  true
+                                                                            }
+                                                                        ],
+                                                         "responses":  {
+                                                                           "200":  {
+                                                                                       "description":  "OK"
+                                                                                   },
+                                                                           "404":  {
+                                                                                       "description":  "Not found"
+                                                                                   }
+                                                                       }
+                                                     }
+                                         },
+                  "/operation_maintenance_lists":  {
+                                                       "get":  {
+                                                                   "summary":  "CMMS: Get operation maintenance lists",
+                                                                   "x-internal":  true,
+                                                                   "parameters":  [
+                                                                                      {
+                                                                                          "name":  "operation_id",
+                                                                                          "in":  "query",
+                                                                                          "schema":  {
+                                                                                                         "type":  "integer",
+                                                                                                         "format":  "int64"
+                                                                                                     },
+                                                                                          "required":  true
+                                                                                      }
+                                                                                  ],
+                                                                   "responses":  {
+                                                                                     "200":  {
+                                                                                                 "description":  "OK"
+                                                                                             }
+                                                                                 }
+                                                               }
+                                                   },
+                  "/asset_failure_types":  {
+                                               "get":  {
+                                                           "summary":  "CMMS: List asset failure types",
+                                                           "x-internal":  true,
+                                                           "responses":  {
+                                                                             "200":  {
+                                                                                         "description":  "OK"
+                                                                                     }
+                                                                         }
+                                                       }
+                                           },
+                  "/asset_failure_types/{asset_id}":  {
+                                                          "get":  {
+                                                                      "summary":  "CMMS: List asset failure types by asset",
+                                                                      "x-internal":  true,
+                                                                      "parameters":  [
+                                                                                         {
+                                                                                             "name":  "asset_id",
+                                                                                             "in":  "path",
+                                                                                             "schema":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        },
+                                                                                             "required":  true
+                                                                                         }
+                                                                                     ],
+                                                                      "responses":  {
+                                                                                        "200":  {
+                                                                                                    "description":  "OK"
+                                                                                                }
+                                                                                    }
+                                                                  }
+                                                      },
+                  "/asset_failure_type_asset_maintenance_lists":  {
+                                                                      "get":  {
+                                                                                  "summary":  "CMMS: Get AFT-AML mappings",
+                                                                                  "x-internal":  true,
+                                                                                  "parameters":  [
+                                                                                                     {
+                                                                                                         "name":  "asset_id",
+                                                                                                         "in":  "query",
+                                                                                                         "schema":  {
+                                                                                                                        "type":  "integer",
+                                                                                                                        "format":  "int64"
+                                                                                                                    },
+                                                                                                         "required":  true
+                                                                                                     },
+                                                                                                     {
+                                                                                                         "name":  "failure_type",
+                                                                                                         "in":  "query",
+                                                                                                         "schema":  {
+                                                                                                                        "type":  "integer",
+                                                                                                                        "format":  "int64"
+                                                                                                                    },
+                                                                                                         "required":  true
+                                                                                                     },
+                                                                                                     {
+                                                                                                         "name":  "default_reliability",
+                                                                                                         "in":  "query",
+                                                                                                         "schema":  {
+                                                                                                                        "type":  "number",
+                                                                                                                        "format":  "float"
+                                                                                                                    },
+                                                                                                         "required":  true
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "responses":  {
+                                                                                                    "200":  {
+                                                                                                                "description":  "OK"
+                                                                                                            }
+                                                                                                }
+                                                                              }
+                                                                  },
+                  "/asset_maintenance_lists":  {
+                                                   "get":  {
+                                                               "summary":  "CMMS: Get asset maintenance lists",
+                                                               "x-internal":  true,
+                                                               "parameters":  [
+                                                                                  {
+                                                                                      "name":  "asset_id",
+                                                                                      "in":  "query",
+                                                                                      "schema":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                                      "required":  true
+                                                                                  }
+                                                                              ],
+                                                               "responses":  {
+                                                                                 "200":  {
+                                                                                             "description":  "OK"
+                                                                                         }
+                                                                             }
+                                                           }
+                                               },
+                  "/asset_failure_types_operations":  {
+                                                          "get":  {
+                                                                      "summary":  "CMMS: Get asset failure type operations",
+                                                                      "x-internal":  true,
+                                                                      "parameters":  [
+                                                                                         {
+                                                                                             "name":  "asset_id",
+                                                                                             "in":  "query",
+                                                                                             "schema":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        },
+                                                                                             "required":  false
+                                                                                         },
+                                                                                         {
+                                                                                             "name":  "failure_type_id",
+                                                                                             "in":  "query",
+                                                                                             "schema":  {
+                                                                                                            "type":  "integer",
+                                                                                                            "format":  "int64"
+                                                                                                        },
+                                                                                             "required":  false
+                                                                                         }
+                                                                                     ],
+                                                                      "responses":  {
+                                                                                        "200":  {
+                                                                                                    "description":  "OK"
+                                                                                                }
+                                                                                    }
+                                                                  }
+                                                      }
               },
-              "example": {
-                "operation_ids": [1001, 1002],
-                "failure_start_time": "2026-03-10T08:00:00Z",
-                "maintenance_end_time": "2026-03-12T10:00:00Z",
-                "source_sys_time": "2026-03-12T10:05:00Z",
-                "asset_id": 501,
-                "default_reliability": [0.9]
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Queued (or idempotent existing job)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AssetPredictOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error"
-          }
-        }
-      }
-    },
-    "/asset_failure_type_predict": {
-      "post": {
-        "summary": "Queue an asset failure type prediction job",
-        "operationId": "assetFailureTypePredict",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AssetFailureTypePredictIn"
-              },
-              "example": {
-                "operation_ids": [1001],
-                "failure_start_time": "2026-03-10T08:00:00Z",
-                "maintenance_end_time": "2026-03-12T10:00:00Z",
-                "source_sys_time": "2026-03-12T10:05:00Z",
-                "asset_id": 501,
-                "failure_type_ids": [11, 12],
-                "default_reliability": [0.9]
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Queued (or idempotent existing job)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AssetFailureTypePredictOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation error"
-          }
-        }
-      }
-    },
-    "/workrequest": {
-      "post": {
-        "summary": "Queue a workrequest-like job",
-        "description": "Uses the same request schema as /asset_failure_type_predict. Current implementation has known gaps: endpoint_type is not set on enqueue and there is no dedicated worker branch for workrequest processing.",
-        "operationId": "workrequest",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AssetFailureTypePredictIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Queued (intended behavior)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AssetFailureTypePredictOut"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Server error (possible with current implementation)"
-          },
-          "422": {
-            "description": "Validation error"
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "AssetPredictIn": {
-        "type": "object",
-        "required": [
-          "operation_ids",
-          "failure_start_time",
-          "maintenance_end_time",
-          "source_sys_time",
-          "asset_id"
-        ],
-        "properties": {
-          "operation_ids": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          "failure_start_time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "maintenance_end_time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "source_sys_time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "asset_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "default_reliability": {
-            "type": "array",
-            "items": {
-              "type": "number",
-              "format": "float"
-            }
-          }
-        }
-      },
-      "AssetPredictOut": {
-        "type": "object",
-        "required": [
-          "prediction_id"
-        ],
-        "properties": {
-          "prediction_id": {
-            "type": "integer",
-            "format": "int64"
-          }
-        }
-      },
-      "AssetFailureTypePredictIn": {
-        "type": "object",
-        "required": [
-          "operation_ids",
-          "failure_start_time",
-          "maintenance_end_time",
-          "source_sys_time",
-          "asset_id",
-          "failure_type_ids"
-        ],
-        "properties": {
-          "operation_ids": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          "failure_start_time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "maintenance_end_time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "source_sys_time": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "asset_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "failure_type_ids": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "format": "int64"
-            }
-          },
-          "default_reliability": {
-            "type": "array",
-            "items": {
-              "type": "number",
-              "format": "float"
-            }
-          }
-        }
-      },
-      "AssetFailureTypePredictOut": {
-        "type": "object",
-        "required": [
-          "prediction_id"
-        ],
-        "properties": {
-          "prediction_id": {
-            "type": "integer",
-            "format": "int64"
-          }
-        }
-      },
-      "CmmsAssetFailureType": {
-        "type": "object",
-        "required": [
-          "asset_id",
-          "failure_type_id",
-          "asset_failure_type_id"
-        ],
-        "properties": {
-          "asset_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "failure_type_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "criticality": {
-            "type": "number",
-            "format": "float"
-          },
-          "asset_failure_type_id": {
-            "type": "integer",
-            "format": "int64"
-          }
-        },
-        "description": "CMMS GET /asset_failure_types or /asset_failure_types/{asset_id} response item"
-      },
-      "CmmsAssetFailureTypesResponse": {
-        "type": "array",
-        "items": {
-          "$ref": "#/components/schemas/CmmsAssetFailureType"
-        },
-        "description": "CMMS asset_failure_types list"
-      },
-      "CmmsAssetFailureTypesOperations": {
-        "type": "object",
-        "required": [
-          "asset_id",
-          "failure_type_id",
-          "operations"
-        ],
-        "properties": {
-          "asset_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "failure_type_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "operations": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/CmmsOperation"
-            }
-          }
-        },
-        "description": "CMMS GET /asset_failure_types_operations response item"
-      },
-      "CmmsOperation": {
-        "type": "object",
-        "required": [
-          "type"
-        ],
-        "properties": {
-          "operation_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "opareation_id": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "BOTH",
-              "CORRECTIVE",
-              "PREVENTIVE"
-            ]
-          }
-        },
-        "description": "CMMS operation item (operation_id sometimes comes as 'opareation_id')."
-      },
-      "CmmsAssetFailureTypesOperationsResponse": {
-        "type": "array",
-        "items": {
-          "$ref": "#/components/schemas/CmmsAssetFailureTypesOperations"
-        },
-        "description": "CMMS asset_failure_types_operations list"
-      }
-    }
-  }
+    "components":  {
+                       "schemas":  {
+                                       "AssetPredictIn":  {
+                                                              "type":  "object",
+                                                              "required":  [
+                                                                               "operation_ids",
+                                                                               "failure_start_time",
+                                                                               "maintenance_end_time",
+                                                                               "source_sys_time",
+                                                                               "asset_id"
+                                                                           ],
+                                                              "properties":  {
+                                                                                 "operation_ids":  {
+                                                                                                       "type":  "array",
+                                                                                                       "items":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                                   },
+                                                                                 "failure_start_time":  {
+                                                                                                            "type":  "string",
+                                                                                                            "format":  "date-time"
+                                                                                                        },
+                                                                                 "maintenance_end_time":  {
+                                                                                                              "type":  "string",
+                                                                                                              "format":  "date-time"
+                                                                                                          },
+                                                                                 "source_sys_time":  {
+                                                                                                         "type":  "string",
+                                                                                                         "format":  "date-time"
+                                                                                                     },
+                                                                                 "asset_id":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "format":  "int64"
+                                                                                              },
+                                                                                 "default_reliability":  {
+                                                                                                             "type":  "array",
+                                                                                                             "items":  {
+                                                                                                                           "type":  "number",
+                                                                                                                           "format":  "float"
+                                                                                                                       }
+                                                                                                         }
+                                                                             }
+                                                          },
+                                       "AssetPredictOut":  {
+                                                               "type":  "object",
+                                                               "required":  [
+                                                                                "prediction_id"
+                                                                            ],
+                                                               "properties":  {
+                                                                                  "prediction_id":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int64"
+                                                                                                    }
+                                                                              }
+                                                           },
+                                       "AssetFailureTypePredictIn":  {
+                                                                         "type":  "object",
+                                                                         "required":  [
+                                                                                          "operation_ids",
+                                                                                          "failure_start_time",
+                                                                                          "maintenance_end_time",
+                                                                                          "source_sys_time",
+                                                                                          "asset_id",
+                                                                                          "failure_type_ids"
+                                                                                      ],
+                                                                         "properties":  {
+                                                                                            "operation_ids":  {
+                                                                                                                  "type":  "array",
+                                                                                                                  "items":  {
+                                                                                                                                "type":  "integer",
+                                                                                                                                "format":  "int64"
+                                                                                                                            }
+                                                                                                              },
+                                                                                            "failure_start_time":  {
+                                                                                                                       "type":  "string",
+                                                                                                                       "format":  "date-time"
+                                                                                                                   },
+                                                                                            "maintenance_end_time":  {
+                                                                                                                         "type":  "string",
+                                                                                                                         "format":  "date-time"
+                                                                                                                     },
+                                                                                            "source_sys_time":  {
+                                                                                                                    "type":  "string",
+                                                                                                                    "format":  "date-time"
+                                                                                                                },
+                                                                                            "asset_id":  {
+                                                                                                             "type":  "integer",
+                                                                                                             "format":  "int64"
+                                                                                                         },
+                                                                                            "failure_type_ids":  {
+                                                                                                                     "type":  "array",
+                                                                                                                     "items":  {
+                                                                                                                                   "type":  "integer",
+                                                                                                                                   "format":  "int64"
+                                                                                                                               }
+                                                                                                                 },
+                                                                                            "default_reliability":  {
+                                                                                                                        "type":  "array",
+                                                                                                                        "items":  {
+                                                                                                                                      "type":  "number",
+                                                                                                                                      "format":  "float"
+                                                                                                                                  }
+                                                                                                                    }
+                                                                                        }
+                                                                     },
+                                       "AssetFailureTypePredictOut":  {
+                                                                          "type":  "object",
+                                                                          "required":  [
+                                                                                           "prediction_id"
+                                                                                       ],
+                                                                          "properties":  {
+                                                                                             "prediction_id":  {
+                                                                                                                   "type":  "integer",
+                                                                                                                   "format":  "int64"
+                                                                                                               }
+                                                                                         }
+                                                                      },
+                                       "CmmsAssetFailureType":  {
+                                                                    "type":  "object",
+                                                                    "required":  [
+                                                                                     "asset_id",
+                                                                                     "failure_type_id",
+                                                                                     "asset_failure_type_id"
+                                                                                 ],
+                                                                    "properties":  {
+                                                                                       "asset_id":  {
+                                                                                                        "type":  "integer",
+                                                                                                        "format":  "int64"
+                                                                                                    },
+                                                                                       "failure_type_id":  {
+                                                                                                               "type":  "integer",
+                                                                                                               "format":  "int64"
+                                                                                                           },
+                                                                                       "criticality":  {
+                                                                                                           "type":  "number",
+                                                                                                           "format":  "float"
+                                                                                                       },
+                                                                                       "asset_failure_type_id":  {
+                                                                                                                     "type":  "integer",
+                                                                                                                     "format":  "int64"
+                                                                                                                 }
+                                                                                   },
+                                                                    "description":  "CMMS GET /asset_failure_types or /asset_failure_types/{asset_id} response item"
+                                                                },
+                                       "CmmsAssetFailureTypesResponse":  {
+                                                                             "type":  "array",
+                                                                             "items":  {
+                                                                                           "$ref":  "#/components/schemas/CmmsAssetFailureType"
+                                                                                       },
+                                                                             "description":  "CMMS asset_failure_types list"
+                                                                         },
+                                       "CmmsAssetFailureTypesOperations":  {
+                                                                               "type":  "object",
+                                                                               "required":  [
+                                                                                                "asset_id",
+                                                                                                "failure_type_id",
+                                                                                                "operations"
+                                                                                            ],
+                                                                               "properties":  {
+                                                                                                  "asset_id":  {
+                                                                                                                   "type":  "integer",
+                                                                                                                   "format":  "int64"
+                                                                                                               },
+                                                                                                  "failure_type_id":  {
+                                                                                                                          "type":  "integer",
+                                                                                                                          "format":  "int64"
+                                                                                                                      },
+                                                                                                  "operations":  {
+                                                                                                                     "type":  "array",
+                                                                                                                     "items":  {
+                                                                                                                                   "$ref":  "#/components/schemas/CmmsOperation"
+                                                                                                                               }
+                                                                                                                 }
+                                                                                              },
+                                                                               "description":  "CMMS GET /asset_failure_types_operations response item"
+                                                                           },
+                                       "CmmsOperation":  {
+                                                             "type":  "object",
+                                                             "required":  [
+                                                                              "type"
+                                                                          ],
+                                                             "properties":  {
+                                                                                "operation_id":  {
+                                                                                                     "type":  "integer",
+                                                                                                     "format":  "int64"
+                                                                                                 },
+                                                                                "opareation_id":  {
+                                                                                                      "type":  "integer",
+                                                                                                      "format":  "int64"
+                                                                                                  },
+                                                                                "type":  {
+                                                                                             "type":  "string",
+                                                                                             "enum":  [
+                                                                                                          "BOTH",
+                                                                                                          "CORRECTIVE",
+                                                                                                          "PREVENTIVE"
+                                                                                                      ]
+                                                                                         }
+                                                                            },
+                                                             "description":  "CMMS operation item (operation_id sometimes comes as \u0027opareation_id\u0027)."
+                                                         },
+                                       "CmmsAssetFailureTypesOperationsResponse":  {
+                                                                                       "type":  "array",
+                                                                                       "items":  {
+                                                                                                     "$ref":  "#/components/schemas/CmmsAssetFailureTypesOperations"
+                                                                                                 },
+                                                                                       "description":  "CMMS asset_failure_types_operations list"
+                                                                                   }
+                                   }
+                   },
+    "x-cmms":  {
+                   "auth_header":  "x-api-key: \u003cCMMS_TOKEN\u003e",
+                   "timeouts":  "total 10s, connect 5s, read 5s"
+               }
 }

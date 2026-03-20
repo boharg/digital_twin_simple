@@ -1,0 +1,119 @@
+﻿{
+  "openapi": "3.0.2",
+  "info": {
+    "title": "CMMS GET Calls (System View)",
+    "version": "1.0.0",
+    "description": "Internal CMMS GET calls used by the service. These are outbound integrations, not public API endpoints."
+  },
+  "servers": [
+    { "url": "{{CMMS_BASE_URL}}" }
+  ],
+  "paths": {
+    "/assets": {
+      "get": {
+        "summary": "Get asset by asset_id",
+        "description": "Internal CMMS call. Query param: asset_id.",
+        "parameters": [
+          { "name": "asset_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } },
+        "x-internal": true
+      }
+    },
+    "/failures": {
+      "get": {
+        "summary": "Get failure by failure_id",
+        "description": "Internal CMMS call. Query param: failure_id.",
+        "parameters": [
+          { "name": "failure_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } },
+        "x-internal": true
+      }
+    },
+    "/failure_types/{failure_type_id}": {
+      "get": {
+        "summary": "Get failure type",
+        "parameters": [
+          { "name": "failure_type_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } },
+        "x-internal": true
+      }
+    },
+    "/maintenance_lists": {
+      "get": {
+        "summary": "Get maintenance list by maintenance_list_id",
+        "parameters": [
+          { "name": "maintenance_list_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } },
+        "x-internal": true
+      }
+    },
+    "/operation_maintenance_lists": {
+      "get": {
+        "summary": "Get operation maintenance lists",
+        "parameters": [
+          { "name": "operation_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": { "200": { "description": "OK" } },
+        "x-internal": true
+      }
+    },
+    "/asset_failure_types": {
+      "get": {
+        "summary": "List asset failure types",
+        "responses": { "200": { "description": "OK" } },
+        "x-internal": true
+      }
+    },
+    "/asset_failure_types/{asset_id}": {
+      "get": {
+        "summary": "List asset failure types by asset",
+        "parameters": [
+          { "name": "asset_id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": { "200": { "description": "OK" } },
+        "x-internal": true
+      }
+    },
+    "/asset_failure_type_asset_maintenance_lists": {
+      "get": {
+        "summary": "Get AFT-AML mappings",
+        "parameters": [
+          { "name": "asset_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } },
+          { "name": "failure_type", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } },
+          { "name": "default_reliability", "in": "query", "required": true, "schema": { "type": "number", "format": "float" } }
+        ],
+        "responses": { "200": { "description": "OK" } },
+        "x-internal": true
+      }
+    },
+    "/asset_maintenance_lists": {
+      "get": {
+        "summary": "Get asset maintenance lists",
+        "parameters": [
+          { "name": "asset_id", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": { "200": { "description": "OK" } },
+        "x-internal": true
+      }
+    },
+    "/asset_failure_types_operations": {
+      "get": {
+        "summary": "Get asset failure type operations",
+        "parameters": [
+          { "name": "asset_id", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64" } },
+          { "name": "failure_type_id", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64" } }
+        ],
+        "responses": { "200": { "description": "OK" } },
+        "x-internal": true
+      }
+    }
+  },
+  "x-cmms": {
+    "auth_header": "x-api-key: <CMMS_TOKEN>",
+    "timeouts": "total 10s, connect 5s, read 5s"
+  }
+}
