@@ -64,3 +64,7 @@ class AssetFailureTypeOperationsOut(BaseModel):
     failure_type_id: int
     asset_id: int
     operations: List[OperationOut]
+
+class AssetFailureCauses:
+    asset_id: int
+    asset_fatigu
