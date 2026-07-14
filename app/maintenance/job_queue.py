@@ -1,11 +1,10 @@
-from .db import SyncSessionLocal
+from ..db import SyncSessionLocal
 from contextlib import contextmanager
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from .models import PredictionJob, JobStatus
+from ..models import PredictionJob, JobStatus
 
 STUCK_JOB_MAX_AGE_SEC = 120
-RETRY_LIMIT = 5
 
 
 def _is_admin_shutdown_error(exc: Exception) -> bool:
@@ -33,21 +32,8 @@ def requeue_stuck_jobs(session: Session):
             updated_at = NOW()
         WHERE status = 'processing'
           AND updated_at < NOW() - (INTERVAL '1 second' * :max_age)
-          AND retry_count < :retry_limit
         """),
-        {"max_age": STUCK_JOB_MAX_AGE_SEC, "retry_limit": RETRY_LIMIT}
-    )
-    session.execute(
-        text("""
-        UPDATE prediction_jobs
-        SET status = 'error',
-            error_message = 'Retry limit exceeded',
-            updated_at = NOW()
-        WHERE status = 'processing'
-          AND updated_at < NOW() - (INTERVAL '1 second' * :max_age)
-          AND retry_count >= :retry_limit
-        """),
-        {"max_age": STUCK_JOB_MAX_AGE_SEC, "retry_limit": RETRY_LIMIT}
+        {"max_age": STUCK_JOB_MAX_AGE_SEC}
     )
     session.commit()
 

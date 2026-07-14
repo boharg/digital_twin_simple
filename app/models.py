@@ -7,7 +7,6 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
-    ForeignKeyConstraint,
     Integer,
     JSON,
     String,
@@ -130,15 +129,16 @@ class AssetWorksheetList(Base):
 
     asset_worksheet_list_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.asset_id"), nullable=False)
-    maintenance_end_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    source_sys_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    maintenance_end_date: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+    source_sys_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     asset_failure_types_id: Mapped[int] = mapped_column(
         ForeignKey("asset_failure_types.asset_failure_type_id"),
         nullable=False,
     )
-    failure_start_time: Mapped[datetime] = mapped_column(DateTime, primary_key=True)
+    failure_start_time: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     downtime_in_min: Mapped[int | None] = mapped_column(BigInteger)
     sys_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    operations_done_lists_id: Mapped[int] = mapped_column(ForeignKey("operations_done_lists.operations_done_lists_id"), nullable=False)
 
 
 class OperationsDoneList(Base):
@@ -147,22 +147,6 @@ class OperationsDoneList(Base):
     operations_done_lists_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     operation_done_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     operation_template_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    asset_worksheet_lists: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    asset_worksheet_list_failure_start_time: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-    )
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["asset_worksheet_lists", "asset_worksheet_list_failure_start_time"],
-            [
-                "asset_worksheet_lists.asset_worksheet_list_id",
-                "asset_worksheet_lists.failure_start_time",
-            ],
-            name="fk_operations_done_lists_asset_worksheet_lists",
-        ),
-    )
 
 
 class Prediction(Base):
@@ -170,10 +154,8 @@ class Prediction(Base):
 
     prediction_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.asset_id"), nullable=False)
-    asset_failure_type_id: Mapped[int] = mapped_column(
-        ForeignKey("asset_failure_types.asset_failure_type_id"),
-        nullable=False,
-    )
+    asset_failure_type_id: Mapped[int] = mapped_column(ForeignKey("asset_failure_types.asset_failure_type_id"), nullable=False)
+    job_id: Mapped[int] = mapped_column(ForeignKey("prediction_jobs.job_id"), nullable=False)
 
 
 class PredictionAssetLevel(Base):
@@ -237,12 +219,8 @@ class PredictionJob(Base):
     job_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-    status: Mapped[JobStatus] = mapped_column(
-        Enum(JobStatus, name="jobstatus"),
-        nullable=False,
-    )
+    status: Mapped[JobStatus] = mapped_column(Enum(JobStatus, name="jobstatus"), nullable=False)
     endpoint_type: Mapped[str] = mapped_column(String, nullable=False)
-    prediction_id: Mapped[int] = mapped_column(ForeignKey("predictions.prediction_id"), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

@@ -4,12 +4,12 @@ from typing import List, Optional
 
 
 class AssetPredictIn(BaseModel):
-    operation_ids: List[int]  # a maintenance műveletekhez
+    operation_ids: List[int]
     failure_start_time: datetime
     maintenance_end_time: datetime
     source_sys_time: datetime
     asset_id: int
-    default_reliability: Optional[List[float]] = None  # ha nincs eta/beta
+    default_reliability: Optional[List[float]] = None
 
 
 class AssetPredictOut(BaseModel):
@@ -17,7 +17,7 @@ class AssetPredictOut(BaseModel):
 
 
 class AssetFailureTypePredictIn(BaseModel):
-    operation_ids: List[int]  # a maintenance műveletekhez
+    operation_ids: List[int]
     failure_start_time: datetime
     maintenance_end_time: datetime
     source_sys_time: datetime
@@ -28,15 +28,6 @@ class AssetFailureTypePredictIn(BaseModel):
 
 class AssetFailureTypePredictOut(BaseModel):
     prediction_id: int
-
-
-class Failures(BaseModel):
-    failure_id: int  # a maintenance műveletekhez
-    failure_name: str = Field(min_length=1)
-    failure_type_id: int
-    source_sys_time: datetime
-    failure_start_time: datetime
-    maintenance_end_time: datetime
 
 
 class AssetIn(BaseModel):
@@ -64,7 +55,3 @@ class AssetFailureTypeOperationsOut(BaseModel):
     failure_type_id: int
     asset_id: int
     operations: List[OperationOut]
-
-class AssetFailureCauses:
-    asset_id: int
-    asset_fatigu

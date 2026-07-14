@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .cmms import cmms_get_asset_failure_causes, cmms_get_assets
+from .maintenance.cmms import cmms_get_asset_failure_causes
 from .models import Asset, AssetFailureType, FailureType
 
 
@@ -40,33 +40,19 @@ def _first_present(row: dict, *keys: str):
 
 
 def ensure_asset(session: Session, asset_id: int) -> bool:
-    asset_id = int(asset_id)
-    asset = session.get(Asset, asset_id)
-    if asset:
-        session.commit()
-        return True
+    """
+    Check whether the CMMS-provided asset_id already exists locally.
 
-    _commit_before_cmms(session)
-    asset_json = asyncio.run(cmms_get_assets(asset_id))
-    if not asset_json:
+    Asset identifiers are owned by CMMS. This function intentionally does not
+    generate assets and does not call a separate CMMS asset endpoint.
+    """
+    if asset_id is None:
         return False
 
-    if isinstance(asset_json, list):
-        asset_json = next(
-            (a for a in asset_json if int(a.get("asset_id", -1)) == asset_id),
-            None,
-        )
-        if not asset_json:
-            return False
-
-    session.merge(
-        Asset(
-            asset_id=int(asset_json["asset_id"]),
-            asset_name=asset_json.get("asset_name", ""),
-        )
-    )
+    asset_id = int(asset_id)
+    asset = session.get(Asset, asset_id)
     session.commit()
-    return True
+    return asset is not None
 
 
 def ensure_failure_type(
@@ -76,11 +62,14 @@ def ensure_failure_type(
     is_preventive: bool | None = None,
 ) -> bool:
     """
-    Temporary compatibility rule: failure_types will be removed later, so for now
-    failure_type_id stores the same value as the CMMS failure_cause_id.
+    Temporary compatibility rule: failure_types will be removed later.
+
+    Until then, the local failure_type_id stores the same value as the CMMS
+    failure_cause_id. A missing failure_cause_id means planned maintenance, so
+    no failure_type row is required.
     """
     if failure_cause_id is None:
-        return False
+        return True
 
     failure_cause_id = int(failure_cause_id)
     ft = session.get(FailureType, failure_cause_id)
@@ -88,7 +77,7 @@ def ensure_failure_type(
         if failure_type_name is not None:
             ft.failure_type_name = failure_type_name
         if is_preventive is not None:
-            ft.is_preventive = is_preventive
+            ft.is_preventive = True
         if ft.failure_cause_id is None:
             ft.failure_cause_id = failure_cause_id
         session.commit()
@@ -141,32 +130,40 @@ def ensure_asset_failure_types(session: Session, asset_id: int) -> list[int]:
             "asset_failure_casue_id",
         )
         failure_cause_id = row.get("failure_cause_id")
-        if asset_failurecause_id is None or failure_cause_id is None:
+
+        if asset_failurecause_id is None and failure_cause_id is None:
             continue
 
         failure_type_name = _first_present(row, "failure_type_name", "failure_cause_name", "code")
         ensure_failure_type(
             session,
-            int(failure_cause_id),
+            int(failure_cause_id) if failure_cause_id is not None else None,
             failure_type_name=str(failure_type_name) if failure_type_name is not None else None,
         )
 
-        aft = session.execute(
-            select(AssetFailureType).where(
-                AssetFailureType.asset_id == asset_id,
-                AssetFailureType.asset_failurecause_id == int(asset_failurecause_id),
+        query = select(AssetFailureType).where(AssetFailureType.asset_id == asset_id)
+        if asset_failurecause_id is not None:
+            query = query.where(
+                AssetFailureType.asset_failurecause_id == int(asset_failurecause_id)
             )
-        ).scalar_one_or_none()
+        elif failure_cause_id is not None:
+            query = query.where(AssetFailureType.failure_type_id == int(failure_cause_id))
+
+        aft = session.execute(query).scalar_one_or_none()
 
         if aft is None:
             aft = AssetFailureType(
                 asset_id=asset_id,
-                failure_type_id=int(failure_cause_id),
-                asset_failurecause_id=int(asset_failurecause_id),
+                failure_type_id=int(failure_cause_id) if failure_cause_id is not None else None,
+                asset_failurecause_id=(
+                    int(asset_failurecause_id) if asset_failurecause_id is not None else None
+                ),
             )
             session.add(aft)
-        else:
+        elif failure_cause_id is not None:
             aft.failure_type_id = int(failure_cause_id)
+        if asset_failurecause_id is not None:
+            aft.asset_failurecause_id = int(asset_failurecause_id)
 
         probability = row.get("default_occurence_probability")
         if probability is None:
@@ -184,17 +181,25 @@ def ensure_asset_failure_types(session: Session, asset_id: int) -> list[int]:
     return synced_ids
 
 
-def ensure_operation_maintenance_lists(session: Session, operation_id: int) -> list[int]:
+def resolve_asset_failure_type_id(
+    session: Session,
+    asset_id: int,
+    failure_cause_id: int | None,
+) -> int | None:
     """
-    TODO: operations table support is intentionally skipped for now.
-    Later this function should persist/validate operation_id based mappings.
-    """
-    return []
+    Return the local asset_failure_type_id for an incoming CMMS failure_cause_id.
 
+    Planned maintenance can arrive with failure_cause_id=None. In that case
+    there is no failure-specific asset_failure_type to resolve.
+    """
+    if failure_cause_id is None:
+        return None
 
-def ensure_asset_maintenance_lists(session: Session, asset_id: int) -> list[int]:
-    """
-    TODO: operations/worksheet mapping support is intentionally skipped for now.
-    Later this function should return local operation/workorder mappings for asset.
-    """
-    return []
+    aft_id = session.execute(
+        select(AssetFailureType.asset_failure_type_id).where(
+            AssetFailureType.asset_id == int(asset_id),
+            AssetFailureType.failure_type_id == int(failure_cause_id),
+        )
+    ).scalar_one_or_none()
+
+    return int(aft_id) if aft_id is not None else None

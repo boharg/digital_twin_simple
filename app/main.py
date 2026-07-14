@@ -5,7 +5,7 @@ from .schemas import (AssetPredictIn, AssetPredictOut,
 from .db import get_async_session, sync_engine
 from .models import Base, PredictionJob
 import logging
-from .jobs import enqueue_prediction_job
+from .maintenance.jobs import enqueue_prediction_job
 
 log = logging.getLogger("api")
 logging.basicConfig(level=logging.INFO)

@@ -7,46 +7,43 @@ from sqlalchemy.orm import Session
 from loguru import logger
 from pydantic import ValidationError
 
-from job_queue import (session_scope, requeue_stuck_jobs,
-                       claim_one_job, _is_admin_shutdown_error, RETRY_LIMIT)
+from .job_queue import session_scope, requeue_stuck_jobs, claim_one_job, _is_admin_shutdown_error
 
-from .models import (PredictionJob, JobStatus, AssetFailureType, Prediction)
+from ..models import (PredictionJob, JobStatus, AssetFailureType, Prediction)
 from .predict import predict, compute_prediction_future_time
-from .utils import atomic_write_json
+from ..utils import atomic_write_json
 from .settings import settings
 from .cmms import (cmms_post_asset_prediction_sync,
-                   cmms_get_asset_failure_types,
-                   cmms_post_asset_failure_type_prediction_sync)
+                   cmms_post_asset_failure_cause_prediction)
 
-from .schemas import AssetPredictIn, AssetFailureTypePredictIn
-from data_sync import (_commit_before_cmms,
-                       ensure_asset,
-                       ensure_failure_type)
+from ..schemas import AssetPredictIn, AssetFailureTypePredictIn
+from ..data_sync import ensure_asset, ensure_failure_type, ensure_asset_failure_types
 
 
 POLL_INTERVAL_SEC = 1.0
 ALLOWED_OPERATION_TYPES = {"BOTH", "CORRECTIVE", "PREVENTIVE"}
 
 
-def insert_prediction_row(session: Session, predicted_reliability: float, pred_time: datetime,
-                          pred_future_time: datetime, aft_id: int | None = None, prediction_id: int | None = None) -> int:
+def insert_prediction_row(
+    session: Session,
+    asset_id: int,
+    aft_id: int,
+    prediction_id: int | None = None,
+) -> int:
+    if prediction_id is not None:
+        pred = session.get(Prediction, int(prediction_id))
+        if pred:
+            pred.asset_id = asset_id
+            pred.asset_failure_type_id = aft_id
+            session.flush()
+            return int(pred.prediction_id)
 
-    # CMMS expects predicted_reliability <= 0.99
-    pr = max(0.0, min(0.99, float(predicted_reliability)))
-
-    pred = Prediction(
-        predicted_reliability=pr,
-        time=pred_time,
-        prediction_future_time=pred_future_time,
-    )
-
-    if aft_id is not None:
-        pred.asset_failure_type_id = aft_id
+    pred = Prediction(asset_id=asset_id, asset_failure_type_id=aft_id)
     if prediction_id is not None:
         pred.prediction_id = prediction_id
 
     session.add(pred)
-    session.flush()  # itt töltődik fel az autoincrement ID
+    session.flush()
     return pred.prediction_id
 
 
@@ -94,58 +91,33 @@ def process_job(session: Session, job: PredictionJob):
             session.commit()
             return
 
-        rows = []
-        try:
-            _commit_before_cmms(session)
-            rows = asyncio.run(cmms_get_asset_failure_types(asset_id)) or []
-        except Exception:
-            rows = []
-
-        if not rows:
+        synced_aft_ids = ensure_asset_failure_types(session, asset_id)
+        if not synced_aft_ids:
             job.status = JobStatus.not_found
-            job.error_message = "No asset_failure_types data in CMMS"
+            job.error_message = "No asset_failure_types data in DB/CMMS"
             session.commit()
             return
 
-        # Map (asset_id, failure_type_id) -> (asset_failure_type_id, criticality)
-        aft_map_by_key: dict[tuple[int, int], tuple[int, float | None]] = {}
-        for r in rows:
-            r_asset = r.get("asset_id")
-            if r_asset is None or int(r_asset) != int(asset_id):
-                continue
-            # Ensure asset exists locally to avoid FK violations on asset_failure_type insert
-            if not ensure_asset(session, int(r_asset)):
-                job.status = JobStatus.not_found
-                job.error_message = f"Asset not found in DB/CMMS: {r_asset}"
-                session.commit()
-                return
-            aft_id = r.get("asset_failure_type_id")
-            ft_id = r.get("failure_type_id")
-            if aft_id is None or ft_id is None:
-                continue
-            aft_map_by_key[(int(asset_id), int(ft_id))] = (int(aft_id), r.get("criticality"))
+        aft_map_by_failure_type: dict[int, int] = dict(
+            session.execute(
+                select(AssetFailureType.failure_type_id, AssetFailureType.asset_failure_type_id)
+                .where(AssetFailureType.asset_id == asset_id)
+            ).all()
+        )
 
         for ftid in failure_type_ids:
-            key = (int(asset_id), int(ftid))
-            if key not in aft_map_by_key:
+            if int(ftid) not in aft_map_by_failure_type:
                 job.status = JobStatus.not_found
-                job.error_message = f"asset_failure_type_id not found in CMMS for failure_type_id: {ftid}"
+                job.error_message = f"asset_failure_type_id not found for failure_type_id: {ftid}"
                 session.commit()
                 return
-            aft_id, crit = aft_map_by_key[key]
+            aft_id = aft_map_by_failure_type[int(ftid)]
             asset_failure_type_ids.append(int(aft_id))
             if not ensure_failure_type(session, ftid):
                 job.status = JobStatus.error
                 job.error_message = f"Failure type not found in DB/CMMS: {ftid}"
                 session.commit()
                 return
-            session.merge(AssetFailureType(
-                asset_failure_type_id=int(aft_id),
-                asset_id=asset_id,
-                failure_type_id=int(ftid),
-                criticality=crit,
-            ))
-        session.flush()
 
     # Minden failure_type_id ellenőrzése (DB -> CMMS). Ha nincs, hiba.
     for ftid in failure_type_ids:
@@ -162,19 +134,37 @@ def process_job(session: Session, job: PredictionJob):
     op_raw = p.operation_ids
     operation_ids: list[int] = [x for x in (op_raw if isinstance(op_raw, (list, tuple)) else [op_raw])]
 
+    aft_id: int | None = None
+    if job.endpoint_type == "asset_failure_type_predict":
+        aft_id = int(asset_failure_type_ids[0])
+    else:
+        asset_failure_type_ids = ensure_asset_failure_types(session, asset_id)
+        if not asset_failure_type_ids:
+            job.status = JobStatus.not_found
+            job.error_message = "No asset_failure_types data in DB/CMMS"
+            session.commit()
+            return
+        aft_id = int(asset_failure_type_ids[0])
+
     prediction_future_time = compute_prediction_future_time(end, days_ahead=7)
 
     if job.endpoint_type == "asset_predict":
         prediction = predict(
             asset_id=asset_id,
+            prediction_future_time=prediction_future_time,
             failure_start_time=start,
             maintenance_end_time=end,
-            job_id=job.job_id
+            source_sys_time=source_time,
+            operation_ids=operation_ids,
         )
         print(prediction)
         pr = max(0.0, min(0.99, float(prediction["predicted_reliability"])))
-        pred_id = insert_prediction_row(session=session, predicted_reliability=pr,
-                                        pred_time=source_time, pred_future_time=prediction_future_time,)
+        pred_id = insert_prediction_row(
+            session=session,
+            asset_id=asset_id,
+            aft_id=aft_id,
+            prediction_id=job.prediction_id,
+        )
         out = {"prediction_id": pred_id, "asset_id": asset_id, "predicted_reliability": pr}
 
         # JSON
@@ -208,8 +198,12 @@ def process_job(session: Session, job: PredictionJob):
 
         # 7) prediction_id + JSON + CMMS POST + prediction tábla insert
         pr = max(0.0, min(0.99, float(prediction["predicted_reliability"])))
-        pred_id = insert_prediction_row(session=session, aft_id=aft_id, predicted_reliability=pr,
-                                        pred_time=source_time, pred_future_time=prediction_future_time,)
+        pred_id = insert_prediction_row(
+            session=session,
+            asset_id=asset_id,
+            aft_id=aft_id,
+            prediction_id=job.prediction_id,
+        )
         out = {
             "prediction_id": pred_id,
             "asset_failure_type_ids": asset_failure_type_ids,
@@ -221,7 +215,7 @@ def process_job(session: Session, job: PredictionJob):
         atomic_write_json(json_path, out)
 
         try:
-            resp = asyncio.run(cmms_post_asset_failure_type_prediction_sync(out))
+            resp = asyncio.run(cmms_post_asset_failure_cause_prediction(out))
             logger.info("CMMS asset_prediction response: {}", resp)
             if isinstance(resp, dict) and resp.get("error"):
                 raise RuntimeError(resp["error"])
@@ -272,13 +266,8 @@ def main():
                         job2 = session2.get(PredictionJob, job_id)
                         if job2:
                             if _is_admin_shutdown_error(e):
-                                job2.retry_count = (job2.retry_count or 0) + 1
-                                if job2.retry_count >= RETRY_LIMIT:
-                                    job2.status = JobStatus.error
-                                    job2.error_message = "Retry limit exceeded"
-                                else:
-                                    job2.status = JobStatus.queued
-                                    job2.error_message = "Retry: DB connection terminated"
+                                job2.status = JobStatus.queued
+                                job2.error_message = "Retry: DB connection terminated"
                             else:
                                 job2.status = JobStatus.error
                                 job2.error_message = f"Unhandled error: {e}"
