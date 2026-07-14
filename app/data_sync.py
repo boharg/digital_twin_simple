@@ -42,9 +42,6 @@ def _first_present(row: dict, *keys: str):
 def ensure_asset(session: Session, asset_id: int) -> bool:
     """
     Check whether the CMMS-provided asset_id already exists locally.
-
-    Asset identifiers are owned by CMMS. This function intentionally does not
-    generate assets and does not call a separate CMMS asset endpoint.
     """
     if asset_id is None:
         return False
@@ -62,9 +59,7 @@ def ensure_failure_type(
     is_preventive: bool | None = None,
 ) -> bool:
     """
-    Temporary compatibility rule: failure_types will be removed later.
-
-    Until then, the local failure_type_id stores the same value as the CMMS
+    The local failure_type_id stores the same value as the CMMS
     failure_cause_id. A missing failure_cause_id means planned maintenance, so
     no failure_type row is required.
     """
@@ -98,12 +93,6 @@ def ensure_failure_type(
 def ensure_asset_failure_types(session: Session, asset_id: int) -> list[int]:
     """
     Load CMMS asset failure causes into local asset_failure_types.
-
-    asset_failure_type_id is intentionally not generated here. The database
-    should provide it with a sequence/default when a new row is inserted.
-
-    TODO: when the operations table is introduced, persist/validate operation_ids
-    from the CMMS payload here.
     """
     asset_id = int(asset_id)
     if not ensure_asset(session, asset_id):

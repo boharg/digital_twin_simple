@@ -1,57 +1,84 @@
-from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class AssetPredictIn(BaseModel):
-    operation_ids: List[int]
-    failure_start_time: datetime
-    maintenance_end_time: datetime
-    source_sys_time: datetime
-    asset_id: int
-    default_reliability: Optional[List[float]] = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    workorder_id: int = Field(gt=0)
+
+    sf_asset_id: int = Field(
+        alias="asset_id",
+        gt=0,
+    )
+
+    failure_cause_id: Optional[int] = Field(
+        default=None,
+        gt=0,
+    )
+
+    failuredate: datetime
+    ended: datetime
+
+    type: str = Field(min_length=1)
+    operation_ids: list[int] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_asset_predict(self):
+        if self.ended < self.failuredate:
+            raise ValueError(
+                "ended cannot be earlier than failuredate"
+            )
+
+        if any(operation_id <= 0 for operation_id in self.operation_ids):
+            raise ValueError(
+                "Every operation_id must be greater than zero"
+            )
+
+        if (
+            self.type.strip().upper() != "PREVENTIVE" and self.failure_cause_id is None
+        ):
+            raise ValueError(
+                "failure_cause_id is required for a non-preventive work order"
+            )
+
+        return self
 
 
-class AssetPredictOut(BaseModel):
-    prediction_id: int
+class AssetPredictAccepted(BaseModel):
+    job_id: int
 
 
-class AssetFailureTypePredictIn(BaseModel):
-    operation_ids: List[int]
-    failure_start_time: datetime
-    maintenance_end_time: datetime
-    source_sys_time: datetime
-    asset_id: int
-    failure_type_ids: List[int]
-    default_reliability: Optional[List[float]] = None
+class AssetPredictionPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    prediction_id: int = Field(gt=0)
+
+    sf_asset_id: int = Field(
+        serialization_alias="asset_id",
+        gt=0,
+    )
+
+    predicted_reliability: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
 
 
-class AssetFailureTypePredictOut(BaseModel):
-    prediction_id: int
+class FailureCausePredictionItem(BaseModel):
+    asset_failurecause_id: int = Field(gt=0)
+
+    predicted_reliability: float = Field(
+        ge=0.0,
+        le=1.0,
+    )
 
 
-class AssetIn(BaseModel):
-    asset_id: int
-    asset_name: str = Field(min_length=1)
+class AssetFailureCausePredictionPayload(BaseModel):
+    prediction_id: int = Field(gt=0)
 
-
-class FailureTypeIn(BaseModel):
-    failure_type_id: int
-    failure_type_name: str = Field(min_length=1)
-    is_preventive: bool
-
-
-class MaintenanceListIn(BaseModel):
-    maintenance_list_id: int
-    maintenance_list_name: str = Field(min_length=1)
-
-
-class OperationOut(BaseModel):
-    operation_id: int
-    type: str  # PREVENTIVE | CORRECTIVE | BOTH | UNKNOWN
-
-
-class AssetFailureTypeOperationsOut(BaseModel):
-    failure_type_id: int
-    asset_id: int
-    operations: List[OperationOut]
+    failure_causes: list[FailureCausePredictionItem] = Field(
+        min_length=1,
+    )
