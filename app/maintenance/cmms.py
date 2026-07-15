@@ -11,45 +11,18 @@ def _headers() -> dict[str, str]:
 
 
 def _timeout() -> httpx.Timeout:
-    return httpx.Timeout(
-        10.0,
-        connect=5.0,
-        read=5.0,
-    )
+    return httpx.Timeout(10.0, connect=5.0, read=5.0)
 
 
-def _log_start(
-    method: str,
-    url: str,
-) -> None:
-    logger.info(
-        "CMMS {} {}",
-        method,
-        url,
-    )
+def _log_start(method: str, url: str) -> None:
+    logger.info("CMMS {} {}", method, url)
 
 
-def _log_done(
-    method: str,
-    url: str,
-    status_code: int,
-    content_type: str | None = None,
-) -> None:
+def _log_done(method: str, url: str, status_code: int, content_type: str | None = None) -> None:
     if content_type:
-        logger.info(
-            "CMMS {} {} -> {} ({})",
-            method,
-            url,
-            status_code,
-            content_type,
-        )
+        logger.info("CMMS {} {} -> {} ({})", method, url, status_code, content_type)
     else:
-        logger.info(
-            "CMMS {} {} -> {}",
-            method,
-            url,
-            status_code,
-        )
+        logger.info("CMMS {} {} -> {}", method, url, status_code)
 
 
 def _json_or_status(
