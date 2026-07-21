@@ -65,8 +65,8 @@ def normalize_positive_int(value: object, field_name: str) -> int:
     except (TypeError, ValueError) as error:
         raise DataSyncValidationError(f"{field_name} must be an integer") from error
 
-    if normalized_value < 0:
-        raise DataSyncValidationError(f"{field_name} must be greater or equivalent than zero")
+    if normalized_value <= 0:
+        raise DataSyncValidationError(f"{field_name} must be greater than zero")
 
     return normalized_value
 
@@ -331,33 +331,34 @@ def ensure_asset_failure_type(
         )
 
     probability_raw = failure_cause.get(
-        "default_occurence_probability"
+        "default_occurrence_probability"
     )
 
+    # Kompatibilitás a CMMS dokumentációban szereplő
+    # elírt mezőnévvel.
     if probability_raw is None:
-        asset_failure_type.default_occurence_probability = (
-            None
+        probability_raw = failure_cause.get(
+            "default_occurence_probability"
         )
+
+    if probability_raw is None:
+        asset_failure_type.default_occurrence_probability = None
     else:
         try:
-            probability = float(
-                probability_raw
-            )
+            probability = float(probability_raw)
         except (TypeError, ValueError) as error:
             raise DataSyncValidationError(
-                "default_occurence_probability "
-                "must be numeric for "
-                "asset_failurecause_id="
-                f"{asset_failurecause_id}"
+                "default_occurrence_probability must be numeric "
+                f"for asset_failurecause_id={asset_failurecause_id}"
             ) from error
 
         if not 0.0 <= probability <= 1.0:
             raise DataSyncValidationError(
-                "default_occurrence_probability must "
-                "be between 0 and 1 for "
-                "asset_failurecause_id="
-                f"{asset_failurecause_id}"
+                "default_occurrence_probability must be between 0 and 1 "
+                f"for asset_failurecause_id={asset_failurecause_id}"
             )
+
+        asset_failure_type.default_occurrence_probability = probability
 
     severity_raw = failure_cause.get(
         "severity"

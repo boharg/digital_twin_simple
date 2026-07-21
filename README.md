@@ -53,4 +53,4 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## Worker külön terminálban
 
-python -m app.worker
+python -m app.maintenance.worker

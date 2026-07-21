@@ -68,7 +68,7 @@ class AssetFailureType(Base):
     asset_failure_type_id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.asset_id"), nullable=False)
     failure_type_id: Mapped[int | None] = mapped_column(ForeignKey("failure_types.failure_type_id"), nullable=True)
-    default_occurrence_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    default_occurence_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
     severity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     asset_failurecause_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
