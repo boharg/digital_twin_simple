@@ -5,224 +5,162 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .maintenance.cmms import (
-    cmms_get_asset_failure_causes,
-)
-from .models import (
-    Asset,
-    AssetFailureType,
-    AssetWorksheetList,
-    FailureType,
-    OperationsDoneList,
-)
+from .maintenance.cmms import (cmms_get_asset_failure_causes)
+from .models import (Asset, AssetFailureType, AssetWorksheetList, FailureType, OperationsDoneList)
 from .schemas import AssetPredictIn
 
 
 class DataSyncNotFoundError(Exception):
     """
-    A szükséges külső vagy helyi adat nem található.
+    Egy szükséges külső vagy helyi adat
+    nem található.
     """
 
 
 class DataSyncValidationError(Exception):
     """
-    A kapott adatok szerkezete vagy kapcsolata hibás.
+    A kapott adatok szerkezete vagy
+    kapcsolata hibás.
     """
 
 
 @dataclass(frozen=True)
 class WorkorderSyncResult:
     """
-    A munkalap-szinkronizálás eredménye.
+    A munkalap- és hibaokszinkronizálás eredménye.
 
-    Az asset_id a saját rendszer belső azonosítója.
+    Az asset_id a saját rendszerben generált
+    belső assets.asset_id.
 
-    A failure_cause_operations dictionary alakja:
+    Az asset_failure_cause_operations alakja:
 
-        {
-            asset_failurecause_id: [
-                operation_id,
-                ...
-            ]
-        }
+        [
+            {
+                "asset_failurecause_id": 31,
+                "operation_ids": [3, 7, 16],
+            },
+            {
+                "asset_failurecause_id": 32,
+                "operation_ids": [8, 11],
+            },
+        ]
     """
 
     asset_id: int
     asset_failure_type_id: int | None
     asset_worksheet_list_id: int
     maintenance_end_date: datetime
-    failure_cause_operations: dict[int, list[int]]
+    asset_failure_cause_operations: list[dict]
 
 
-def resolve_asset_id(
-    session: Session,
-    sf_asset_id: int,
-) -> int:
+def normalize_positive_int(value: object, field_name: str) -> int:
     """
-    A SilverFrogtól érkező külső assetazonosító
-    alapján visszaadja a saját rendszerben generált
-    belső asset_id értéket.
-
-    Külső azonosító:
-        assets.sf_asset_id
-
-    Belső azonosító:
-        assets.asset_id
+    Pozitív egész számmá alakít egy külső
+    rendszerből érkező azonosítót.
     """
-    asset_id = session.execute(
-        select(Asset.asset_id).where(
-            Asset.sf_asset_id == int(sf_asset_id)
-        )
-    ).scalar_one_or_none()
+
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError) as error:
+        raise DataSyncValidationError(f"{field_name} must be an integer") from error
+
+    if normalized_value <= 0:
+        raise DataSyncValidationError(f"{field_name} must be greater than zero")
+
+    return normalized_value
+
+
+def get_failure_causes(payload: dict) -> list[dict]:
+    """
+    Ellenőrzi és visszaadja a CMMS-válasz
+    failure_causes listáját.
+    """
+
+    if not isinstance(payload, dict):
+        raise DataSyncValidationError("The CMMS response must be a JSON object")
+
+    failure_causes = payload.get("failure_causes")
+
+    if not isinstance(failure_causes, list):
+        raise DataSyncValidationError("failure_causes must be a list")
+
+    normalized_failure_causes: list[dict] = []
+
+    for index, failure_cause in enumerate(failure_causes):
+        if not isinstance(failure_cause, dict):
+            raise DataSyncValidationError("Every failure cause must be a JSON object; invalid index=" f"{index}")
+
+        normalized_failure_causes.append(failure_cause)
+
+    return normalized_failure_causes
+
+
+def resolve_asset_id(session: Session, sf_asset_id: int) -> int:
+    """
+    A CMMS-től érkező külső asset_id alapján
+    visszaadja a saját rendszer belső asset_id
+    értékét.
+    """
+
+    asset_id = session.execute(select(Asset.asset_id).where(Asset.sf_asset_id == int(sf_asset_id))).scalar_one_or_none()
 
     if asset_id is None:
-        raise DataSyncNotFoundError(
-            "No local asset found for "
-            f"sf_asset_id={sf_asset_id}"
-        )
+        raise DataSyncNotFoundError("No local asset was found for " f"sf_asset_id={sf_asset_id}")
 
     return int(asset_id)
 
 
-def build_failure_cause_operation_map(
-    payload: dict,
-) -> dict[int, list[int]]:
+def build_asset_failure_cause_operations(payload: dict) -> list[dict]:
     """
-    A CMMS asset_failure_causes válaszából
-    elkészíti az alábbi leképezést:
-
-        {
-            asset_failurecause_id: operation_ids
-        }
-
-    Ezek az operation_ids értékek nem kerülnek
-    az operations_done_lists táblába. Kizárólag
-    a predikciós modul bemeneteként használjuk őket.
+    A CMMS-válaszból elkészíti a predikció
+    számára átadandó listát.
     """
-    failure_causes = payload.get(
-        "failure_causes"
-    )
 
-    if not isinstance(failure_causes, list):
-        raise DataSyncValidationError(
-            "failure_causes must be a list"
-        )
+    failure_causes = get_failure_causes(payload)
 
-    operation_map: dict[int, list[int]] = {}
+    result: list[dict] = []
+    seen_asset_failurecause_ids: set[int] = set()
 
     for failure_cause in failure_causes:
-        if not isinstance(failure_cause, dict):
-            raise DataSyncValidationError(
-                "Every failure cause must be "
-                "a JSON object"
-            )
+        if (failure_cause.get("asset_failurecause_id") is None):
+            raise DataSyncValidationError("asset_failurecause_id is missing")
 
-        asset_failurecause_id = (
-            failure_cause.get(
-                "asset_failurecause_id"
-            )
-        )
+        asset_failurecause_id = (normalize_positive_int(failure_cause.get("asset_failurecause_id"), "asset_failurecause_id"))
 
-        if asset_failurecause_id is None:
-            raise DataSyncValidationError(
-                "asset_failurecause_id is missing"
-            )
+        if (asset_failurecause_id in seen_asset_failurecause_ids):
+            raise DataSyncValidationError("Duplicate asset_failurecause_id: " f"{asset_failurecause_id}")
 
-        normalized_asset_failurecause_id = int(
-            asset_failurecause_id
-        )
+        seen_asset_failurecause_ids.add(asset_failurecause_id)
 
-        if normalized_asset_failurecause_id <= 0:
-            raise DataSyncValidationError(
-                "asset_failurecause_id must be "
-                "greater than zero"
-            )
+        operation_ids_raw = failure_cause.get("operation_ids")
 
-        if (
-            normalized_asset_failurecause_id
-            in operation_map
-        ):
-            raise DataSyncValidationError(
-                "Duplicate asset_failurecause_id: "
-                f"{normalized_asset_failurecause_id}"
-            )
+        if not isinstance(operation_ids_raw, list):
+            raise DataSyncValidationError("operation_ids must be a list for asset_failurecause_id=" f"{asset_failurecause_id}")
 
-        operation_ids = failure_cause.get(
-            "operation_ids"
-        )
+        operation_ids: list[int] = []
 
-        if not isinstance(operation_ids, list):
-            raise DataSyncValidationError(
-                "operation_ids must be a list "
-                "for asset_failurecause_id="
-                f"{normalized_asset_failurecause_id}"
-            )
-
-        normalized_operation_ids: list[int] = []
-
-        for operation_id in operation_ids:
-            normalized_operation_id = int(
-                operation_id
-            )
-
-            if normalized_operation_id <= 0:
-                raise DataSyncValidationError(
-                    "Every failure-cause operation_id "
-                    "must be greater than zero"
+        for operation_id_raw in operation_ids_raw:
+            operation_ids.append(
+                normalize_positive_int(
+                    operation_id_raw,
+                    (
+                        "operation_id for "
+                        "asset_failurecause_id="
+                        f"{asset_failurecause_id}"
+                    ),
                 )
-
-            normalized_operation_ids.append(
-                normalized_operation_id
             )
 
-        operation_map[
-            normalized_asset_failurecause_id
-        ] = normalized_operation_ids
-
-    return operation_map
-
-
-def select_failure_cause(
-    payload: dict,
-    failure_cause_id: int,
-) -> dict:
-    """
-    Kiválasztja a CMMS-válaszból az incoming
-    munkalap failure_cause_id értékéhez tartozó
-    hibaokot.
-    """
-    failure_causes = payload.get(
-        "failure_causes"
-    )
-
-    if not isinstance(failure_causes, list):
-        raise DataSyncValidationError(
-            "failure_causes must be a list"
+        result.append(
+            {
+                "asset_failurecause_id": (
+                    asset_failurecause_id
+                ),
+                "operation_ids": operation_ids,
+            }
         )
 
-    for failure_cause in failure_causes:
-        if not isinstance(failure_cause, dict):
-            continue
-
-        current_failure_cause_id = (
-            failure_cause.get(
-                "failure_cause_id"
-            )
-        )
-
-        if current_failure_cause_id is None:
-            continue
-
-        if (
-            int(current_failure_cause_id)
-            == int(failure_cause_id)
-        ):
-            return failure_cause
-
-    raise DataSyncNotFoundError(
-        f"failure_cause_id={failure_cause_id} "
-        "was not returned by the CMMS"
-    )
+    return result
 
 
 def ensure_failure_type(
@@ -233,31 +171,37 @@ def ensure_failure_type(
     Létrehozza vagy frissíti a failure_types
     rekordot.
 
-    Azonosító-leképezés:
+    Leképezés:
+        failure_types.failure_type_id = CMMS failure_cause_id
 
-        failure_type_id = failure_cause_id
+        failure_types.failure_cause_id = CMMS failure_cause_id
     """
-    failure_cause_id = failure_cause.get(
-        "failure_cause_id"
-    )
 
-    if failure_cause_id is None:
+    if (
+        failure_cause.get(
+            "failure_cause_id"
+        )
+        is None
+    ):
         raise DataSyncValidationError(
             "failure_cause_id is missing"
         )
 
-    failure_type_id = int(
-        failure_cause_id
+    failure_type_id = normalize_positive_int(
+        failure_cause.get(
+            "failure_cause_id"
+        ),
+        "failure_cause_id",
     )
 
-    if failure_type_id <= 0:
-        raise DataSyncValidationError(
-            "failure_cause_id must be "
-            "greater than zero"
-        )
-
-    failure_type_name = failure_cause.get(
+    failure_type_name_raw = failure_cause.get(
         "code"
+    )
+
+    failure_type_name = (
+        str(failure_type_name_raw)
+        if failure_type_name_raw is not None
+        else None
     )
 
     failure_type = session.get(
@@ -267,17 +211,21 @@ def ensure_failure_type(
 
     if failure_type is None:
         failure_type = FailureType(
-            failure_type_id=failure_type_id,
+            failure_type_id=(
+                failure_type_id
+            ),
             failure_type_name=(
-                str(failure_type_name)
-                if failure_type_name is not None
-                else None
+                failure_type_name
             ),
             is_preventive=None,
-            failure_cause_id=failure_type_id,
+            failure_cause_id=(
+                failure_type_id
+            ),
         )
 
-        session.add(failure_type)
+        session.add(
+            failure_type
+        )
 
     else:
         failure_type.failure_cause_id = (
@@ -285,7 +233,7 @@ def ensure_failure_type(
         )
 
         if failure_type_name is not None:
-            failure_type.failure_type_name = str(
+            failure_type.failure_type_name = (
                 failure_type_name
             )
 
@@ -304,31 +252,41 @@ def ensure_asset_failure_type(
     Létrehozza vagy frissíti az
     asset_failure_types rekordot.
 
-    Azonosító-leképezés:
+    Leképezés:
 
-        asset_failure_type_id
-            = asset_failurecause_id
+        asset_failure_types.asset_id
+            = belső assets.asset_id
+
+        asset_failure_types.failure_type_id
+            = CMMS failure_cause_id
+
+        asset_failure_types.asset_failurecause_id
+            = CMMS asset_failurecause_id
+
+        asset_failure_types.asset_failure_type_id
+            = CMMS asset_failurecause_id
     """
-    asset_failurecause_id = (
+
+    if (
         failure_cause.get(
             "asset_failurecause_id"
         )
-    )
-
-    if asset_failurecause_id is None:
+        is None
+    ):
         raise DataSyncValidationError(
             "asset_failurecause_id is missing"
         )
 
-    asset_failure_type_id = int(
-        asset_failurecause_id
+    asset_failurecause_id = normalize_positive_int(
+        failure_cause.get(
+            "asset_failurecause_id"
+        ),
+        "asset_failurecause_id",
     )
 
-    if asset_failure_type_id <= 0:
-        raise DataSyncValidationError(
-            "asset_failurecause_id must be "
-            "greater than zero"
-        )
+    asset_failure_type_id = (
+        asset_failurecause_id
+    )
 
     asset_failure_type = session.get(
         AssetFailureType,
@@ -340,26 +298,27 @@ def ensure_asset_failure_type(
             asset_failure_type_id=(
                 asset_failure_type_id
             ),
-            asset_id=int(asset_id),
+            asset_id=int(
+                asset_id
+            ),
             failure_type_id=int(
                 failure_type_id
             ),
             asset_failurecause_id=(
-                asset_failure_type_id
+                asset_failurecause_id
             ),
         )
 
-        session.add(asset_failure_type)
+        session.add(
+            asset_failure_type
+        )
 
     else:
-        if (
-            int(asset_failure_type.asset_id)
-            != int(asset_id)
-        ):
+        if (int(asset_failure_type.asset_id) != int(asset_id)):
             raise DataSyncValidationError(
                 "The asset_failurecause_id is "
-                "already assigned to another "
-                "local asset"
+                "already assigned to another asset: "
+                f"{asset_failurecause_id}"
             )
 
         asset_failure_type.failure_type_id = int(
@@ -367,34 +326,162 @@ def ensure_asset_failure_type(
         )
 
         asset_failure_type.asset_failurecause_id = (
-            asset_failure_type_id
+            asset_failurecause_id
         )
 
-    probability = failure_cause.get(
+    probability_raw = failure_cause.get(
         "default_occurrence_probability"
     )
 
-    if probability is not None:
-        asset_failure_type.default_occurrence_probability = (
-            float(probability)
-        )
-    else:
+    if probability_raw is None:
         asset_failure_type.default_occurrence_probability = (
             None
         )
+    else:
+        try:
+            asset_failure_type.default_occurrence_probability = (
+                float(probability_raw)
+            )
+        except (TypeError, ValueError) as error:
+            raise DataSyncValidationError(
+                "default_occurrence_probability "
+                "must be numeric for "
+                "asset_failurecause_id="
+                f"{asset_failurecause_id}"
+            ) from error
 
-    severity = failure_cause.get(
+    severity_raw = failure_cause.get(
         "severity"
     )
 
-    if severity is not None:
-        asset_failure_type.severity = int(
-            severity
-        )
-    else:
+    if severity_raw is None:
         asset_failure_type.severity = None
+    else:
+        asset_failure_type.severity = (
+            normalize_positive_int(
+                severity_raw,
+                (
+                    "severity for "
+                    "asset_failurecause_id="
+                    f"{asset_failurecause_id}"
+                ),
+            )
+        )
 
     session.flush()
+
+    return asset_failure_type_id
+
+
+def synchronize_failure_causes(
+    session: Session,
+    asset_id: int,
+    payload: dict,
+) -> dict[int, int]:
+    """
+    A CMMS GET-válasz összes hibaokát azonnal
+    szinkronizálja a failure_types és
+    asset_failure_types táblákba.
+
+    Visszatérési érték:
+
+        {
+            failure_type_id: asset_failure_type_id
+        }
+
+    Mivel:
+
+        failure_type_id = failure_cause_id
+
+        asset_failure_type_id
+            = asset_failurecause_id
+    """
+
+    failure_causes = get_failure_causes(
+        payload
+    )
+
+    failure_type_mapping: dict[int, int] = {}
+
+    for failure_cause in failure_causes:
+        failure_type_id = ensure_failure_type(
+            session=session,
+            failure_cause=failure_cause,
+        )
+
+        if (
+            failure_type_id
+            in failure_type_mapping
+        ):
+            raise DataSyncValidationError(
+                "Duplicate failure_cause_id in "
+                "the CMMS response: "
+                f"{failure_type_id}"
+            )
+
+        asset_failure_type_id = (
+            ensure_asset_failure_type(
+                session=session,
+                asset_id=asset_id,
+                failure_type_id=(
+                    failure_type_id
+                ),
+                failure_cause=failure_cause,
+            )
+        )
+
+        failure_type_mapping[
+            failure_type_id
+        ] = asset_failure_type_id
+
+    return failure_type_mapping
+
+
+def resolve_workorder_asset_failure_type_id(
+    workorder: AssetPredictIn,
+    failure_type_mapping: dict[int, int],
+) -> int | None:
+    """
+    Meghatározza, hogy a munkalap melyik
+    asset_failure_types rekordhoz kapcsolódjon.
+
+    Preventív munkalap:
+        NULL
+
+    Nem preventív munkalap:
+        a beérkező failure_cause_id alapján
+        feloldott asset_failure_type_id
+    """
+
+    workorder_type = (
+        workorder.type.strip().upper()
+    )
+
+    if workorder_type == "PREVENTIVE":
+        return None
+
+    if workorder.failure_cause_id is None:
+        raise DataSyncValidationError(
+            "failure_cause_id is required for "
+            "a non-preventive workorder"
+        )
+
+    failure_type_id = int(
+        workorder.failure_cause_id
+    )
+
+    asset_failure_type_id = (
+        failure_type_mapping.get(
+            failure_type_id
+        )
+    )
+
+    if asset_failure_type_id is None:
+        raise DataSyncNotFoundError(
+            "The workorder failure_cause_id was "
+            "not returned by the CMMS: "
+            f"{failure_type_id}"
+        )
 
     return asset_failure_type_id
 
@@ -406,31 +493,55 @@ def store_asset_worksheet(
     asset_failure_type_id: int | None,
 ) -> AssetWorksheetList:
     """
-    Létrehozza az asset_worksheet_lists rekordot.
+    Meglévő munkalapot ad vissza vagy új
+    asset_worksheet_lists rekordot készít.
 
-    Leképezés:
+    Természetes azonosítás:
 
-        workorder.failuredate
-            -> failure_start_time
-
-        workorder.ended
-            -> maintenance_end_date
-
-        workorder.ended
-            -> source_sys_time
-
-        NULL
-            -> downtime_in_min
-
-    A sys_time értékét az adatbázis
-    DEFAULT CURRENT_TIMESTAMP beállítása tölti ki.
+        asset_id
+        maintenance_end_date
+        failure_start_time
     """
+
+    existing_worksheets = session.execute(
+        select(AssetWorksheetList
+               ).where(AssetWorksheetList.asset_id == int(asset_id),
+                       AssetWorksheetList.maintenance_end_date == workorder.ended,
+                       AssetWorksheetList.failure_start_time == workorder.failuredate,
+                       )
+    ).scalars().all()
+
+    if len(existing_worksheets) > 1:
+        raise DataSyncValidationError(
+            "Multiple asset worksheets were found "
+            "for the same asset and timestamps"
+        )
+
+    if existing_worksheets:
+        worksheet = existing_worksheets[0]
+
+        stored_asset_failure_type_id = (
+            worksheet.asset_failure_type_id
+        )
+
+        if (stored_asset_failure_type_id != asset_failure_type_id):
+            raise DataSyncValidationError(
+                "The existing asset worksheet has "
+                "a different asset_failure_type_id"
+            )
+
+        return worksheet
+
     worksheet = AssetWorksheetList(
-        asset_id=int(asset_id),
+        asset_id=int(
+            asset_id
+        ),
         maintenance_end_date=(
             workorder.ended
         ),
-        source_sys_time=workorder.ended,
+        source_sys_time=(
+            workorder.ended
+        ),
         asset_failure_type_id=(
             asset_failure_type_id
         ),
@@ -440,7 +551,10 @@ def store_asset_worksheet(
         downtime_in_min=None,
     )
 
-    session.add(worksheet)
+    session.add(
+        worksheet
+    )
+
     session.flush()
 
     return worksheet
@@ -452,28 +566,46 @@ def store_completed_operations(
     worksheet: AssetWorksheetList,
 ) -> None:
     """
-    Az /asset_predict üzenet operation_ids
-    listájának minden eleméhez külön
-    operations_done_lists rekordot készít.
+    Az /asset_predict operation_ids listájának
+    minden elemét külön rekordként menti.
 
-    A CMMS asset_failure_causes válaszában
-    szereplő operation_ids lista nem kerül
-    ebbe a táblába.
+    A CMMS GET-ben szereplő operation_ids
+    értékeket ez a függvény nem menti.
     """
-    for operation_id in operation_ids:
-        normalized_operation_id = int(
-            operation_id
+
+    normalized_operation_ids = [
+        normalize_positive_int(
+            operation_id,
+            "completed operation_id",
+        )
+        for operation_id in operation_ids
+    ]
+
+    if (len(normalized_operation_ids) != len(set(normalized_operation_ids))):
+        raise DataSyncValidationError(
+            "The workorder operation_ids list "
+            "contains duplicates"
         )
 
-        if normalized_operation_id <= 0:
-            raise DataSyncValidationError(
-                "Every completed operation_id "
-                "must be greater than zero"
+    existing_operation_ids = set(
+        session.execute(
+            select(
+                OperationsDoneList.operation_template_id
+            ).where(
+                OperationsDoneList.asset_worksheet_list_id == int(worksheet.asset_worksheet_list_id),
+
+                OperationsDoneList.maintenance_end_date == worksheet.maintenance_end_date,
             )
+        ).scalars().all()
+    )
+
+    for operation_id in normalized_operation_ids:
+        if operation_id in existing_operation_ids:
+            continue
 
         operation = OperationsDoneList(
             operation_template_id=(
-                normalized_operation_id
+                operation_id
             ),
             asset_worksheet_list_id=int(
                 worksheet.asset_worksheet_list_id
@@ -483,7 +615,9 @@ def store_completed_operations(
             ),
         )
 
-        session.add(operation)
+        session.add(
+            operation
+        )
 
     session.flush()
 
@@ -493,85 +627,53 @@ def synchronize_workorder(
     workorder: AssetPredictIn,
 ) -> WorkorderSyncResult:
     """
-    A teljes munkalap-szinkronizálási folyamat.
+    Végrehajtja a teljes szinkronizálási folyamatot.
 
-    Két külön operation_ids forrást kezel:
+    1. Lekéri a CMMS asset failure cause adatokat.
+    2. Elkészíti a predikció bemeneti listáját.
+    3. Feloldja a belső asset_id értéket.
+    4. Szinkronizálja az összes CMMS-hibaokot.
+    5. Meghatározza a munkalap hibaokkapcsolatát.
+    6. Elmenti vagy megkeresi a munkalapot.
+    7. Elmenti a ténylegesen elvégzett műveleteket.
 
-    1. workorder.operation_ids
-
-       Ezek a ténylegesen elvégzett műveletek.
-       Bekerülnek az operations_done_lists táblába.
-
-    2. CMMS failure_causes[].operation_ids
-
-       Ezek az egyes hibaokokhoz rendelt műveletek.
-       Dictionary készül belőlük a predikció számára.
-
-    A függvény nem végez commitot. A tranzakció
-    véglegesítése a worker feladata.
+    A függvény nem commitol. A commit a worker
+    feladata.
     """
-    workorder_type = (
-        workorder.type.strip().upper()
-    )
 
-    # A CMMS-lekérés minden munkalapnál szükséges,
-    # mert a failure_cause_operations dictionary
-    # a predikció bemenete lesz.
     cmms_payload = asyncio.run(
         cmms_get_asset_failure_causes(
             workorder.sf_asset_id
         )
     )
 
-    failure_cause_operations = (
-        build_failure_cause_operation_map(
+    asset_failure_cause_operations = (
+        build_asset_failure_cause_operations(
             cmms_payload
         )
     )
 
-    failure_cause: dict | None = None
-
-    if workorder_type != "PREVENTIVE":
-        if workorder.failure_cause_id is None:
-            raise DataSyncValidationError(
-                "failure_cause_id is required "
-                "for a non-preventive workorder"
-            )
-
-        failure_cause = select_failure_cause(
-            cmms_payload,
-            workorder.failure_cause_id,
-        )
-
-    # A külső SilverFrog assetazonosító
-    # feloldása a belső asset_id értékre.
     asset_id = resolve_asset_id(
-        session,
-        workorder.sf_asset_id,
+        session=session,
+        sf_asset_id=workorder.sf_asset_id,
     )
 
-    asset_failure_type_id: int | None = None
-
-    # Preventív munkalapnál nem készül
-    # failure_types vagy asset_failure_types rekord.
-    if failure_cause is not None:
-        failure_type_id = ensure_failure_type(
-            session,
-            failure_cause,
+    failure_type_mapping = (
+        synchronize_failure_causes(
+            session=session,
+            asset_id=asset_id,
+            payload=cmms_payload,
         )
+    )
 
-        asset_failure_type_id = (
-            ensure_asset_failure_type(
-                session=session,
-                asset_id=asset_id,
-                failure_type_id=(
-                    failure_type_id
-                ),
-                failure_cause=(
-                    failure_cause
-                ),
-            )
+    asset_failure_type_id = (
+        resolve_workorder_asset_failure_type_id(
+            workorder=workorder,
+            failure_type_mapping=(
+                failure_type_mapping
+            ),
         )
+    )
 
     worksheet = store_asset_worksheet(
         session=session,
@@ -582,13 +684,9 @@ def synchronize_workorder(
         ),
     )
 
-    # Kizárólag az /asset_predict
-    # operation_ids listája kerül adatbázisba.
     store_completed_operations(
         session=session,
-        operation_ids=(
-            workorder.operation_ids
-        ),
+        operation_ids=workorder.operation_ids,
         worksheet=worksheet,
     )
 
@@ -603,7 +701,7 @@ def synchronize_workorder(
         maintenance_end_date=(
             worksheet.maintenance_end_date
         ),
-        failure_cause_operations=(
-            failure_cause_operations
+        asset_failure_cause_operations=(
+            asset_failure_cause_operations
         ),
     )

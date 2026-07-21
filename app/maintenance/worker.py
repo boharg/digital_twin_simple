@@ -5,9 +5,10 @@ from datetime import datetime
 from loguru import logger
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from ..data_sync import (DataSyncNotFoundError, DataSyncValidationError, synchronize_workorder)
-from ..models import (JobStatus, Prediction, PredictionJob)
+from ..models import (AssetFailureType, JobStatus, Prediction, PredictionJob)
 from ..schemas import (AssetFailureCausePredictionPayload, AssetPredictionPayload, AssetPredictIn, FailureCausePredictionItem)
 from .cmms import (cmms_post_asset_failure_cause_prediction, cmms_post_asset_prediction)
 from .job_queue import (_is_admin_shutdown_error, claim_one_job, requeue_stuck_jobs, session_scope)
@@ -56,7 +57,7 @@ def normalize_probability(value: object, field_name: str) -> float:
     return probability
 
 
-def validate_prediction_result(prediction_result: object, known_asset_failurecause_ids: set[int]) -> tuple[int, list[int], list[float], float]:
+def validate_prediction_result(prediction_result: object) -> tuple[int, list[int], list[float], float]:
     """
     Ellenőrzi a predikciós modul kimenetét.
 
@@ -68,9 +69,6 @@ def validate_prediction_result(prediction_result: object, known_asset_failurecau
             "failure_type_probability": [0.12, 0.23],
             "predicted_reliability": 0.894
         }
-
-    Ebben a folyamatban a failure_type_ids lista elemei
-    asset_failurecause_id értékeket jelentenek.
     """
 
     if not isinstance(prediction_result, dict):
@@ -109,9 +107,6 @@ def validate_prediction_result(prediction_result: object, known_asset_failurecau
 
         if failure_type_id <= 0:
             raise ValueError("Every failure_type_id must be greater than zero")
-
-        if (failure_type_id not in known_asset_failurecause_ids):
-            raise ValueError("The prediction returned an unknown asset_failurecause_id: " f"{failure_type_id}")
 
         failure_type_ids.append(failure_type_id)
 
@@ -155,18 +150,69 @@ def verify_stored_prediction(session: Session, prediction_id: int, job_id: int, 
     return stored_prediction
 
 
-def build_failure_cause_items(failure_type_ids: list[int], failure_type_probabilities: list[float]) -> list[FailureCausePredictionItem]:
+def build_failure_cause_items(asset_failurecause_ids: list[int], failure_type_probabilities: list[float]) -> list[FailureCausePredictionItem]:
     """
-    A predikció párhuzamos listáiból elkészíti
-    a CMMS által elvárt failure_causes listát.
+    A feloldott asset_failurecause_id értékeket
+    összepárosítja a predikció valószínűségeivel.
     """
 
-    failure_causes: list[FailureCausePredictionItem] = []
+    if (len(asset_failurecause_ids) != len(failure_type_probabilities)):
+        raise ValueError("asset_failurecause_ids and failure_type_probabilities must have the same number of elements")
 
-    for (failure_type_id, probability) in zip(failure_type_ids, failure_type_probabilities):
-        failure_causes.append(FailureCausePredictionItem(asset_failurecause_id=(failure_type_id), predicted_reliability=(probability)))
+    return [FailureCausePredictionItem(asset_failurecause_id=(asset_failurecause_id), predicted_reliability=probability)
+            for (asset_failurecause_id, probability) in zip(asset_failurecause_ids, failure_type_probabilities)]
 
-    return failure_causes
+
+def resolve_asset_failurecause_ids(session: Session, asset_id: int, failure_type_ids: list[int]) -> list[int]:
+    """
+    A predikcióból kapott failure_type_id értékeket
+    az adott belső asset_id alapján feloldja a CMMS
+    asset_failurecause_id értékekre.
+
+    A visszatérési lista sorrendje megegyezik a
+    failure_type_ids lista sorrendjével.
+    """
+
+    if not failure_type_ids:
+        raise ValueError("failure_type_ids cannot be empty")
+
+    rows = session.execute(
+        select(
+            AssetFailureType.failure_type_id,
+            AssetFailureType.asset_failurecause_id,
+        ).where(
+            AssetFailureType.asset_id == int(asset_id),
+
+            AssetFailureType.failure_type_id.in_(
+                failure_type_ids
+            ),
+        )
+    ).all()
+
+    failure_type_mapping: dict[int, int] = {}
+
+    for (failure_type_id, asset_failurecause_id) in rows:
+        if failure_type_id is None:
+            continue
+
+        normalized_failure_type_id = int(failure_type_id)
+
+        if asset_failurecause_id is None:
+            raise ValueError("asset_failurecause_id is NULL for " f"asset_id={asset_id}, " "failure_type_id=" f"{normalized_failure_type_id}")
+
+        normalized_asset_failurecause_id = int(asset_failurecause_id)
+
+        if (normalized_failure_type_id in failure_type_mapping):
+            raise ValueError("Multiple asset_failure_types rows were found for " f"asset_id={asset_id}, " "failure_type_id=" f"{normalized_failure_type_id}")
+
+        failure_type_mapping[normalized_failure_type_id] = normalized_asset_failurecause_id
+
+    missing_failure_type_ids = [failure_type_id for failure_type_id in failure_type_ids if failure_type_id not in failure_type_mapping]
+
+    if missing_failure_type_ids:
+        raise ValueError("No asset_failurecause_id was found " f"for asset_id={asset_id} and " "failure_type_ids=" f"{missing_failure_type_ids}")
+
+    return [failure_type_mapping[failure_type_id] for failure_type_id in failure_type_ids]
 
 
 def process_job(session: Session, job: PredictionJob) -> None:
@@ -223,23 +269,11 @@ def process_job(session: Session, job: PredictionJob) -> None:
         # 2. a predikciós táblák feltöltése;
         # 3. az adatbázis-commit;
         # 4. az eredmény visszaadása.
-        prediction_result = predict(job_id=job_id, maintenance_end_time=(workorder.ended), failure_start_time=(workorder.failuredate), asset_id=(sync_result.asset_id), failure_cause_operations=(sync_result.failure_cause_operations))
+        prediction_result = predict(job_id=job_id, maintenance_end_time=(workorder.ended), failure_start_time=(workorder.failuredate), asset_id=(sync_result.asset_id), failure_cause_operations=(sync_result.asset_failure_cause_operations))
 
-        (
-            prediction_id,
-            failure_type_ids,
-            failure_type_probabilities,
-            predicted_reliability,
-        ) = validate_prediction_result(
-            prediction_result=(
-                prediction_result
-            ),
-            known_asset_failurecause_ids=set(
-                sync_result
-                .failure_cause_operations
-                .keys()
-            ),
-        )
+        (prediction_id, failure_type_ids, failure_type_probabilities, predicted_reliability) = validate_prediction_result(prediction_result=prediction_result)
+
+        asset_failurecause_ids = (resolve_asset_failurecause_ids(session=session, asset_id=sync_result.asset_id, failure_type_ids=failure_type_ids))
 
         # A worker nem ír a predictions táblába.
         # Csak ellenőrzi, hogy a predikciós modul
@@ -287,21 +321,7 @@ def process_job(session: Session, job: PredictionJob) -> None:
             )
         )
 
-        failure_cause_payload = (
-            AssetFailureCausePredictionPayload(
-                prediction_id=prediction_id,
-                failure_causes=(
-                    build_failure_cause_items(
-                        failure_type_ids=(
-                            failure_type_ids
-                        ),
-                        failure_type_probabilities=(
-                            failure_type_probabilities
-                        ),
-                    )
-                ),
-            )
-        )
+        failure_cause_payload = (AssetFailureCausePredictionPayload(prediction_id=prediction_id, failure_causes=(build_failure_cause_items(asset_failurecause_ids=(asset_failurecause_ids), failure_type_probabilities=(failure_type_probabilities)))))
 
         asset_response = asyncio.run(
             cmms_post_asset_prediction(
@@ -373,14 +393,9 @@ def main() -> None:
         try:
             now = time.monotonic()
 
-            if (
-                now - last_requeue
-                >= REQUEUE_INTERVAL_SEC
-            ):
+            if (now - last_requeue >= REQUEUE_INTERVAL_SEC):
                 with session_scope() as session:
-                    requeue_stuck_jobs(
-                        session
-                    )
+                    requeue_stuck_jobs(session)
 
                 last_requeue = now
 

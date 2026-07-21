@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,7 +16,7 @@ class AssetPredictIn(BaseModel):
     failuredate: datetime
     ended: datetime
 
-    type: str = Field(min_length=1)
+    type: Literal["PREVENTIVE", "CORRECTIVE"]
     operation_ids: list[int] = Field(min_length=1)
 
     @model_validator(mode="after")
