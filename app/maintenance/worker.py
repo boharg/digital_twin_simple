@@ -11,7 +11,7 @@ from ..data_sync import (DataSyncNotFoundError, DataSyncValidationError, synchro
 from ..models import (AssetFailureType, JobStatus, Prediction, PredictionJob)
 from ..schemas import (AssetFailureCausePredictionPayload, AssetPredictionPayload, AssetPredictIn, FailureCausePredictionItem)
 from .cmms import (cmms_post_asset_failure_cause_prediction, cmms_post_asset_prediction)
-from .job_queue import (_is_admin_shutdown_error, claim_one_job, requeue_stuck_jobs, session_scope)
+from .job_queue import (_is_admin_shutdown_error, claim_one_job, job_heartbeat, requeue_stuck_jobs, session_scope)
 from .predict import predict
 
 
@@ -269,7 +269,7 @@ def process_job(session: Session, job: PredictionJob) -> None:
         # 2. a predikciós táblák feltöltése;
         # 3. az adatbázis-commit;
         # 4. az eredmény visszaadása.
-        prediction_result = predict(job_id=job_id, maintenance_end_time=(workorder.ended), failure_start_time=(workorder.failuredate), asset_id=(sync_result.asset_id), failure_cause_operations=(sync_result.asset_failure_cause_operations))
+        prediction_result = predict(job_id=job_id, maintenance_end_time=(workorder.ended), failure_start_time=(workorder.failuredate), asset_id=(sync_result.asset_id), asset_failure_cause_operations=(sync_result.asset_failure_cause_operations))
 
         (prediction_id, failure_type_ids, failure_type_probabilities, predicted_reliability) = validate_prediction_result(prediction_result=prediction_result)
 
@@ -430,10 +430,13 @@ def main() -> None:
                     continue
 
                 try:
-                    process_job(
-                        session=session,
-                        job=job,
-                    )
+                    with job_heartbeat(
+                        job_id
+                    ):
+                        process_job(
+                            session=session,
+                            job=job,
+                        )
 
                 except Exception as error:
                     logger.exception(

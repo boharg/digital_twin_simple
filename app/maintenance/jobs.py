@@ -4,9 +4,62 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import JobStatus, PredictionJob
+from ..models import (
+    JobStatus,
+    PredictionJob,
+)
 from ..schemas import AssetPredictIn
 from ..utils import request_sha256
+
+
+RETRYABLE_STATUSES = {
+    JobStatus.error,
+    JobStatus.not_found,
+}
+
+
+async def reuse_existing_job(
+    session: AsyncSession,
+    job: PredictionJob,
+) -> int:
+    """
+    Kezeli az ismételten beérkező, teljesen
+    azonos kérést.
+
+    queued, processing vagy done állapotnál
+    csak visszaadja a meglévő job_id értéket.
+
+    error vagy not_found állapotnál ugyanazt
+    a jobot újra queued állapotba teszi.
+    """
+
+    if job.status in RETRYABLE_STATUSES:
+        job.status = JobStatus.queued
+        job.error_message = None
+        job.updated_at = datetime.utcnow()
+
+        await session.commit()
+        await session.refresh(
+            job
+        )
+
+    return int(
+        job.job_id
+    )
+
+
+async def find_job_by_request_hash(
+    session: AsyncSession,
+    request_hash: str,
+) -> PredictionJob | None:
+    """
+    Megkeresi a request_hash értékhez tartozó
+    prediction_jobs rekordot.
+    """
+
+    result = await session.execute(select(PredictionJob).where(PredictionJob.request_hash == request_hash))
+
+    return result.scalar_one_or_none()
 
 
 async def enqueue_prediction_job(
@@ -15,10 +68,11 @@ async def enqueue_prediction_job(
     endpoint_type: str = "asset_predict",
 ) -> int:
     """
-    Létrehozza az /asset_predict kéréshez tartozó feldolgozási feladatot.
+    Létrehozza az /asset_predict kéréshez
+    tartozó feldolgozási feladatot.
 
-    Ugyanaz a teljes kérés nem hoz létre új jobot, hanem visszaadja
-    a korábban létrehozott job_id értékét.
+    Ugyanaz a teljes kérés nem hoz létre új
+    prediction_jobs rekordot.
     """
 
     payload = body.model_dump(
@@ -26,18 +80,20 @@ async def enqueue_prediction_job(
         by_alias=True,
     )
 
-    request_hash = request_sha256(payload)
+    request_hash = request_sha256(
+        payload
+    )
 
-    existing_job_id = (
-        await session.execute(
-            select(PredictionJob.job_id).where(
-                PredictionJob.request_hash == request_hash
-            )
+    existing_job = await find_job_by_request_hash(
+        session=session,
+        request_hash=request_hash,
+    )
+
+    if existing_job is not None:
+        return await reuse_existing_job(
+            session=session,
+            job=existing_job,
         )
-    ).scalar_one_or_none()
-
-    if existing_job_id is not None:
-        return int(existing_job_id)
 
     now = datetime.utcnow()
 
@@ -52,28 +108,37 @@ async def enqueue_prediction_job(
         updated_at=now,
     )
 
-    session.add(job)
+    session.add(
+        job
+    )
 
     try:
         await session.commit()
-        await session.refresh(job)
+        await session.refresh(
+            job
+        )
 
     except IntegrityError:
-        # Két azonos kérés egyidejű beérkezése esetén a request_hash
-        # egyedi korlátozása miatt csak az egyik INSERT sikerül.
+        # Két teljesen azonos kérés egyidejű
+        # beérkezésekor csak az egyik INSERT
+        # lehet sikeres.
         await session.rollback()
 
-        existing_job_id = (
-            await session.execute(
-                select(PredictionJob.job_id).where(
-                    PredictionJob.request_hash == request_hash
-                )
+        existing_job = (
+            await find_job_by_request_hash(
+                session=session,
+                request_hash=request_hash,
             )
-        ).scalar_one_or_none()
+        )
 
-        if existing_job_id is None:
+        if existing_job is None:
             raise
 
-        return int(existing_job_id)
+        return await reuse_existing_job(
+            session=session,
+            job=existing_job,
+        )
 
-    return int(job.job_id)
+    return int(
+        job.job_id
+    )

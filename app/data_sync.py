@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
+from collections import Counter
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -64,8 +65,8 @@ def normalize_positive_int(value: object, field_name: str) -> int:
     except (TypeError, ValueError) as error:
         raise DataSyncValidationError(f"{field_name} must be an integer") from error
 
-    if normalized_value <= 0:
-        raise DataSyncValidationError(f"{field_name} must be greater than zero")
+    if normalized_value < 0:
+        raise DataSyncValidationError(f"{field_name} must be greater or equivalent than zero")
 
     return normalized_value
 
@@ -330,25 +331,33 @@ def ensure_asset_failure_type(
         )
 
     probability_raw = failure_cause.get(
-        "default_occurrence_probability"
+        "default_occurence_probability"
     )
 
     if probability_raw is None:
-        asset_failure_type.default_occurrence_probability = (
+        asset_failure_type.default_occurence_probability = (
             None
         )
     else:
         try:
-            asset_failure_type.default_occurrence_probability = (
-                float(probability_raw)
+            probability = float(
+                probability_raw
             )
         except (TypeError, ValueError) as error:
             raise DataSyncValidationError(
-                "default_occurrence_probability "
+                "default_occurence_probability "
                 "must be numeric for "
                 "asset_failurecause_id="
                 f"{asset_failurecause_id}"
             ) from error
+
+        if not 0.0 <= probability <= 1.0:
+            raise DataSyncValidationError(
+                "default_occurrence_probability must "
+                "be between 0 and 1 for "
+                "asset_failurecause_id="
+                f"{asset_failurecause_id}"
+            )
 
     severity_raw = failure_cause.get(
         "severity"
@@ -567,10 +576,15 @@ def store_completed_operations(
 ) -> None:
     """
     Az /asset_predict operation_ids listájának
-    minden elemét külön rekordként menti.
+    minden elemét külön operations_done_lists
+    rekordként menti.
 
-    A CMMS GET-ben szereplő operation_ids
-    értékeket ez a függvény nem menti.
+    Ugyanaz az operation_template_id többször is
+    szerepelhet. Ebben az esetben minden előfordulás
+    külön adatbázisrekordot jelent.
+
+    Ismételt jobfeldolgozáskor csak a hiányzó
+    előfordulásokat hozza létre.
     """
 
     normalized_operation_ids = [
@@ -581,43 +595,77 @@ def store_completed_operations(
         for operation_id in operation_ids
     ]
 
-    if (len(normalized_operation_ids) != len(set(normalized_operation_ids))):
-        raise DataSyncValidationError(
-            "The workorder operation_ids list "
-            "contains duplicates"
-        )
-
-    existing_operation_ids = set(
-        session.execute(
-            select(
-                OperationsDoneList.operation_template_id
-            ).where(
-                OperationsDoneList.asset_worksheet_list_id == int(worksheet.asset_worksheet_list_id),
-
-                OperationsDoneList.maintenance_end_date == worksheet.maintenance_end_date,
-            )
-        ).scalars().all()
+    desired_counts = Counter(
+        normalized_operation_ids
     )
 
-    for operation_id in normalized_operation_ids:
-        if operation_id in existing_operation_ids:
-            continue
+    existing_operation_ids = (session.execute(select(OperationsDoneList.operation_template_id).where(
+        OperationsDoneList.asset_worksheet_list_id == int(worksheet.asset_worksheet_list_id),
+        OperationsDoneList.maintenance_end_date == worksheet.maintenance_end_date,)).scalars().all())
 
-        operation = OperationsDoneList(
-            operation_template_id=(
-                operation_id
+    existing_counts = Counter(
+        int(operation_id)
+        for operation_id
+        in existing_operation_ids
+    )
+
+    # Ha az adatbázisban több előfordulás van,
+    # mint amennyit az aktuális workorder tartalmaz,
+    # akkor nem lehet eldönteni, melyik rekordot
+    # kellene törölni. Ezért hibát jelezünk.
+    inconsistent_counts = {
+        operation_id: {
+            "stored": stored_count,
+            "received": desired_counts.get(
+                operation_id,
+                0,
             ),
-            asset_worksheet_list_id=int(
-                worksheet.asset_worksheet_list_id
-            ),
-            maintenance_end_date=(
-                worksheet.maintenance_end_date
-            ),
+        }
+        for (
+            operation_id,
+            stored_count,
+        ) in existing_counts.items()
+        if (stored_count > desired_counts.get(operation_id, 0,))
+    }
+
+    if inconsistent_counts:
+        raise DataSyncValidationError(
+            "The stored operations do not match "
+            "the received workorder operations: "
+            f"{inconsistent_counts}"
         )
 
-        session.add(
-            operation
+    for (
+        operation_id,
+        desired_count,
+    ) in desired_counts.items():
+        existing_count = existing_counts.get(
+            operation_id,
+            0,
         )
+
+        missing_count = (desired_count - existing_count)
+
+        for _ in range(
+            missing_count
+        ):
+            operation = OperationsDoneList(
+                operation_template_id=(
+                    operation_id
+                ),
+                asset_worksheet_list_id=int(
+                    worksheet
+                    .asset_worksheet_list_id
+                ),
+                maintenance_end_date=(
+                    worksheet
+                    .maintenance_end_date
+                ),
+            )
+
+            session.add(
+                operation
+            )
 
     session.flush()
 

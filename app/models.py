@@ -36,7 +36,7 @@ class PredictionJob(Base):
 
     job_id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     workorder_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True,)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[JobStatus] = mapped_column(Enum(JobStatus, name="jobstatus"), nullable=False, default=JobStatus.queued)
     endpoint_type: Mapped[str] = mapped_column(String, nullable=False)
